@@ -1,0 +1,4 @@
+STATUS=OK
+OPERATION=REVERSE_COMPLEMENT
+SEQUENCE_LENGTH=39
+OUTPUT_SEQ_PATH=C:\Users\F I ENTERPRISES\Downloads\DNAAnalyzer_Tier1\frontend\session\reverse_complement.seq

@@ -1,0 +1,5 @@
+STATUS=OK
+OPERATION=DNA_TO_RNA
+SEQUENCE_LENGTH=39
+URACIL_COUNT=9
+OUTPUT_SEQ_PATH=C:\Users\F I ENTERPRISES\Downloads\DNAAnalyzer_Tier1\frontend\session\transcribed_rna.seq

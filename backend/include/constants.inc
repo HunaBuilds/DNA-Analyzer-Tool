@@ -1,0 +1,36 @@
+MAX_PATH_LEN            EQU 512
+MAX_HEADER_LEN          EQU 1024
+DEFAULT_ERR_BUF_LEN     EQU 512
+
+OP_NONE                 EQU 0
+OP_STATS                EQU 1
+OP_GC_WIN               EQU 2
+OP_COMPRESS             EQU 3
+OP_REV_COMP             EQU 4
+OP_DNA_TO_RNA           EQU 5
+
+ERR_NONE                EQU 0
+ERR_FILE_OPEN           EQU 1
+ERR_EMPTY_SEQ           EQU 2
+ERR_NO_HEADER           EQU 3
+ERR_INVALID_CHAR        EQU 4
+ERR_BUFFER_LIMIT        EQU 5
+ERR_INVALID_PARAMS      EQU 6
+ERR_AMBIGUOUS_N         EQU 7
+ERR_FILE_WRITE          EQU 8
+
+DNA2_MAGIC              EQU 32414E44h
+DNA2_VERSION            EQU 02h
+DNA2_HEADER_SIZE        EQU 18
+
+ASCII_SPACE             EQU 20h
+ASCII_TAB               EQU 09h
+ASCII_CR                EQU 0Dh
+ASCII_LF                EQU 0Ah
+ASCII_QUOTE             EQU 22h
+ASCII_DASH              EQU 2Dh
+ASCII_GT                EQU 3Eh
+ASCII_ZERO              EQU 30h
+ASCII_NINE              EQU 39h
+
+HEAP_ZERO_FLAG          EQU 00000008h
