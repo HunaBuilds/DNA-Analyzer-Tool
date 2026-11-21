@@ -14,7 +14,9 @@ from frontend.ui.qt_compat import (
     QTableWidget,
     QTableWidgetItem,
     QSpinBox,
+    QLineEdit,
     QPlainTextEdit,
+    QScrollArea,
     QGuiApplication,
     align_left,
     align_center,
@@ -23,6 +25,7 @@ from frontend.ui.qt_compat import (
 )
 from frontend.bridge.asm_bridge import AssemblyBridge, AssemblyWorker
 from frontend.ui.charts import BaseCompositionChart, GcLineChart
+from frontend.ui.pdf_report import write_analysis_pdf
 
 
 APP_STYLESHEET = """
@@ -174,13 +177,17 @@ QHeaderView::section {
     border: none;
     font-weight: 600;
 }
-QSpinBox {
+QSpinBox, QLineEdit {
     background-color: #0b1120;
     color: #f8fafc;
     border: 1px solid #334155;
     border-radius: 6px;
     padding: 5px 10px;
     font-size: 13px;
+}
+QLabel.HelpText {
+    color: #94a3b8;
+    font-size: 12px;
 }
 """
 
@@ -202,6 +209,15 @@ class MainWindow(QMainWindow):
         self.rev_comp_sequence = ""
         self.rna_sequence = ""
         self.last_windows = []
+        self.stats_result = None
+        self.gc_result = None
+        self.rev_result = None
+        self.rna_result = None
+        self.codon_result = None
+        self.pattern_result = None
+        self.similarity_result = None
+        self.primer_result = None
+        self.second_fasta_path = ""
 
         self.setWindowTitle("DNA Analyzer Tool — MASM x86 + PyQt Tier 1 Workbench")
         self.resize(1280, 800)
@@ -262,6 +278,11 @@ class MainWindow(QMainWindow):
             "2-Bit DNA Compression",
             "Reverse Complement",
             "DNA to RNA Conversion",
+            "Codon Translation",
+            "Pattern Search",
+            "Sequence Similarity",
+            "Primer Tm Analysis",
+            "PDF Report",
         ]
         for idx, text in enumerate(nav_items):
             btn = QPushButton(text)
@@ -323,6 +344,11 @@ class MainWindow(QMainWindow):
         self.btn_upload.clicked.connect(self._on_upload_fasta)
         tb_layout.addWidget(self.btn_upload)
 
+        self.btn_pdf = QPushButton("Generate PDF Report")
+        self.btn_pdf.setObjectName("SecondaryBtn")
+        self.btn_pdf.clicked.connect(self._on_generate_pdf)
+        tb_layout.addWidget(self.btn_pdf)
+
         right_layout.addWidget(topbar)
 
         self.pages = QStackedWidget()
@@ -331,6 +357,11 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self._build_compression_page())
         self.pages.addWidget(self._build_rev_comp_page())
         self.pages.addWidget(self._build_rna_page())
+        self.pages.addWidget(self._scroll_page(self._build_codon_page()))
+        self.pages.addWidget(self._scroll_page(self._build_pattern_page()))
+        self.pages.addWidget(self._scroll_page(self._build_similarity_page()))
+        self.pages.addWidget(self._scroll_page(self._build_primer_page()))
+        self.pages.addWidget(self._scroll_page(self._build_pdf_page()))
 
         right_layout.addWidget(self.pages)
         main_layout.addWidget(right_panel)
@@ -615,6 +646,245 @@ class MainWindow(QMainWindow):
 
         return page
 
+    def _scroll_page(self, page: QWidget) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setWidget(page)
+        return scroll
+
+    def _help_label(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setProperty("class", "HelpText")
+        return label
+
+    def _prepare_table(self, table: QTableWidget):
+        table.horizontalHeader().setSectionResizeMode(stretch_resize())
+        table.setEditTriggers(no_edit_triggers())
+        table.setWordWrap(True)
+
+    def _fill_table(self, table: QTableWidget, rows: list, columns: list):
+        table.setRowCount(len(rows))
+        for r_idx, row in enumerate(rows):
+            for c_idx, key in enumerate(columns):
+                table.setItem(r_idx, c_idx, QTableWidgetItem(str(row.get(key, ""))))
+
+    def _build_codon_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
+
+        layout.addWidget(self._help_label(
+            "The loaded sequence is treated as the coding strand. Translation starts at base 1 in a fixed reading frame "
+            "(codon starts at nucleotide positions 1, 4, 7, and so on). DNA T is transcribed to RNA U, then the RNA is split "
+            "into consecutive groups of three using backend/data/codon_table.csv. This does not search for a start codon or "
+            "choose another frame. Stop codons are * / Stop. A codon containing N is ? / Ambiguous and is not guessed. "
+            "A trailing 1 or 2 bases are shown as an incomplete codon and are not translated."
+        ))
+
+        bar = QFrame()
+        bar.setProperty("class", "Card")
+        b_layout = QHBoxLayout(bar)
+        b_layout.setContentsMargins(16, 12, 16, 12)
+        self.btn_run_codon = QPushButton("Translate Codons")
+        self.btn_run_codon.setObjectName("PrimaryBtn")
+        self.btn_run_codon.clicked.connect(self._on_run_codon)
+        self.lbl_codon_summary = QLabel("Translation has not been run for this FASTA.")
+        self.lbl_codon_summary.setWordWrap(True)
+        b_layout.addWidget(self.btn_run_codon)
+        b_layout.addWidget(self.lbl_codon_summary, 1)
+        layout.addWidget(bar)
+
+        card = QFrame()
+        card.setProperty("class", "Card")
+        c_layout = QVBoxLayout(card)
+        c_layout.setContentsMargins(16, 14, 16, 14)
+        self.lbl_codon_rna = QLabel("RNA sequence")
+        self.lbl_codon_rna.setProperty("class", "SectionTitle")
+        self.txt_codon_rna = QPlainTextEdit()
+        self.txt_codon_rna.setProperty("class", "SeqBox")
+        self.txt_codon_rna.setReadOnly(True)
+        self.txt_codon_rna.setMaximumHeight(120)
+        c_layout.addWidget(self.lbl_codon_rna)
+        c_layout.addWidget(self.txt_codon_rna)
+        layout.addWidget(card)
+
+        ordered_card = QFrame()
+        ordered_card.setProperty("class", "Card")
+        o_layout = QVBoxLayout(ordered_card)
+        o_layout.setContentsMargins(16, 14, 16, 14)
+        ordered_title = QLabel("Complete codons in order")
+        ordered_title.setProperty("class", "SectionTitle")
+        self.codon_table = QTableWidget(0, 5)
+        self.codon_table.setHorizontalHeaderLabels(["#", "Start (1-based)", "Codon", "Symbol", "Amino acid"])
+        self._prepare_table(self.codon_table)
+        o_layout.addWidget(ordered_title)
+        o_layout.addWidget(self.codon_table)
+        layout.addWidget(ordered_card)
+
+        sum_card = QFrame()
+        sum_card.setProperty("class", "Card")
+        s_layout = QVBoxLayout(sum_card)
+        s_layout.setContentsMargins(16, 14, 16, 14)
+        sum_title = QLabel("Distinct codons")
+        sum_title.setProperty("class", "SectionTitle")
+        self.codon_summary_table = QTableWidget(0, 5)
+        self.codon_summary_table.setHorizontalHeaderLabels(
+            ["Codon", "Symbol", "Amino acid", "Count", "Start positions (1-based)"]
+        )
+        self._prepare_table(self.codon_summary_table)
+        s_layout.addWidget(sum_title)
+        s_layout.addWidget(self.codon_summary_table)
+        layout.addWidget(sum_card)
+        return page
+
+    def _build_pattern_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
+        layout.addWidget(self._help_label(
+            "Search the loaded cleaned sequence. The pattern must be nonempty and may contain only A, T, G, C, or N. "
+            "Lowercase input is normalized to uppercase. N is a literal base, not a wildcard. "
+            "Every overlapping occurrence is reported: after each position the search advances one base. Coordinates are 1-based."
+        ))
+        bar = QFrame()
+        bar.setProperty("class", "Card")
+        b_layout = QHBoxLayout(bar)
+        b_layout.setContentsMargins(16, 12, 16, 12)
+        b_layout.addWidget(QLabel("Pattern:"))
+        self.txt_pattern = QLineEdit()
+        self.txt_pattern.setPlaceholderText("Example: ATGN")
+        self.btn_run_pattern = QPushButton("Search")
+        self.btn_run_pattern.setObjectName("PrimaryBtn")
+        self.btn_run_pattern.clicked.connect(self._on_run_pattern)
+        b_layout.addWidget(self.txt_pattern, 1)
+        b_layout.addWidget(self.btn_run_pattern)
+        layout.addWidget(bar)
+        self.lbl_pattern_summary = QLabel("Enter a pattern and click Search.")
+        self.lbl_pattern_summary.setWordWrap(True)
+        self.lbl_pattern_summary.setProperty("class", "SectionTitle")
+        layout.addWidget(self.lbl_pattern_summary)
+        card = QFrame()
+        card.setProperty("class", "Card")
+        c_layout = QVBoxLayout(card)
+        c_layout.setContentsMargins(16, 14, 16, 14)
+        self.pattern_table = QTableWidget(0, 4)
+        self.pattern_table.setHorizontalHeaderLabels(["Occurrence", "Start (1-based)", "End (1-based)", "Matched pattern"])
+        self._prepare_table(self.pattern_table)
+        c_layout.addWidget(self.pattern_table)
+        layout.addWidget(card)
+        return page
+
+    def _build_similarity_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
+        layout.addWidget(self._help_label(
+            "Positional Similarity. Sequence 1 is the loaded FASTA. Choose a second FASTA to compare. "
+            "Both files are parsed and validated in Assembly. Bases are compared from position 1 through the shorter sequence. "
+            "This is not an alignment and does not account for insertions or deletions. "
+            "similarity percent = matches / compared positions * 100. Extra bases on the longer sequence are unpaired. "
+            "Changing either FASTA clears the previous comparison result."
+        ))
+        bar = QFrame()
+        bar.setProperty("class", "Card")
+        b_layout = QHBoxLayout(bar)
+        b_layout.setContentsMargins(16, 12, 16, 12)
+        self.btn_pick_second = QPushButton("Select Second FASTA")
+        self.btn_pick_second.setObjectName("PrimaryBtn")
+        self.btn_pick_second.clicked.connect(self._on_pick_second_fasta)
+        self.btn_run_similarity = QPushButton("Run Positional Comparison")
+        self.btn_run_similarity.setObjectName("SecondaryBtn")
+        self.btn_run_similarity.clicked.connect(self._on_run_similarity)
+        b_layout.addWidget(self.btn_pick_second)
+        b_layout.addWidget(self.btn_run_similarity)
+        b_layout.addStretch(1)
+        layout.addWidget(bar)
+        self.lbl_similarity_summary = QLabel("Load a FASTA, then select the second sequence.")
+        self.lbl_similarity_summary.setWordWrap(True)
+        self.lbl_similarity_summary.setProperty("class", "SectionTitle")
+        layout.addWidget(self.lbl_similarity_summary)
+        card = QFrame()
+        card.setProperty("class", "Card")
+        c_layout = QVBoxLayout(card)
+        c_layout.setContentsMargins(16, 14, 16, 14)
+        self.similarity_table = QTableWidget(0, 5)
+        self.similarity_table.setHorizontalHeaderLabels(
+            ["Type", "Position (1-based)", "Sequence", "Base 1", "Base 2"]
+        )
+        self._prepare_table(self.similarity_table)
+        c_layout.addWidget(self.similarity_table)
+        layout.addWidget(card)
+        return page
+
+    def _build_primer_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
+        layout.addWidget(self._help_label(
+            "Basic Wallace-rule Tm estimate. Every overlapping window of length L in the loaded cleaned sequence is scanned. "
+            "Tm (degrees Celsius) = 2 * (A + T) + 4 * (G + C). Windows containing N are skipped and have no numeric Tm. "
+            "This educational estimate does not account for salt concentration, primer concentration, or nearest-neighbor effects. "
+            "Candidates have not been validated for laboratory use. L must be an integer from 1 through the sequence length."
+        ))
+        bar = QFrame()
+        bar.setProperty("class", "Card")
+        b_layout = QHBoxLayout(bar)
+        b_layout.setContentsMargins(16, 12, 16, 12)
+        b_layout.addWidget(QLabel("Candidate length L:"))
+        self.spin_primer_len = QSpinBox()
+        self.spin_primer_len.setRange(1, 1000000)
+        self.spin_primer_len.setValue(20)
+        self.btn_run_primer = QPushButton("Scan Candidate Windows")
+        self.btn_run_primer.setObjectName("PrimaryBtn")
+        self.btn_run_primer.clicked.connect(self._on_run_primer)
+        b_layout.addWidget(self.spin_primer_len)
+        b_layout.addWidget(self.btn_run_primer)
+        b_layout.addStretch(1)
+        layout.addWidget(bar)
+        self.lbl_primer_summary = QLabel("Choose L and scan the loaded sequence.")
+        self.lbl_primer_summary.setWordWrap(True)
+        self.lbl_primer_summary.setProperty("class", "SectionTitle")
+        layout.addWidget(self.lbl_primer_summary)
+        card = QFrame()
+        card.setProperty("class", "Card")
+        c_layout = QVBoxLayout(card)
+        c_layout.setContentsMargins(16, 14, 16, 14)
+        self.primer_table = QTableWidget(0, 9)
+        self.primer_table.setHorizontalHeaderLabels(
+            ["Candidate", "Sequence", "Start", "End", "A", "T", "G", "C", "Tm (C)"]
+        )
+        self._prepare_table(self.primer_table)
+        c_layout.addWidget(self.primer_table)
+        layout.addWidget(card)
+        return page
+
+    def _build_pdf_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
+        layout.addWidget(self._help_label(
+            "Generate a PDF for the loaded FASTA. Biological values come from Assembly reports that have actually been run. "
+            "Analyses that have not been run are marked as not run. Python lays out the document and does not recalculate "
+            "counts, GC, translation, matches, similarity, or Tm."
+        ))
+        self.lbl_pdf_status = QLabel("Load a FASTA to generate a report.")
+        self.lbl_pdf_status.setWordWrap(True)
+        self.lbl_pdf_status.setProperty("class", "SectionTitle")
+        layout.addWidget(self.lbl_pdf_status)
+        self.btn_pdf_page = QPushButton("Generate PDF Report")
+        self.btn_pdf_page.setObjectName("PrimaryBtn")
+        self.btn_pdf_page.clicked.connect(self._on_generate_pdf)
+        layout.addWidget(self.btn_pdf_page, 0)
+        layout.addStretch(1)
+        return page
+
     def _switch_page(self, index: int):
         titles = [
             "Overview & Basic DNA Statistics",
@@ -622,6 +892,11 @@ class MainWindow(QMainWindow):
             "2-Bit DNA Compression (.dna)",
             "Reverse Complement (5' -> 3')",
             "DNA to RNA Conversion",
+            "Codon Translation",
+            "Pattern Search",
+            "Sequence Similarity",
+            "Primer Tm Analysis",
+            "PDF Report",
         ]
         self.pages.setCurrentIndex(index)
         self.lbl_page_title.setText(titles[index])
@@ -629,6 +904,10 @@ class MainWindow(QMainWindow):
             btn.setProperty("active", "true" if idx == index else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)
+        if index == 5 and self.clean_sequence and self.codon_result is None:
+            self._on_run_codon()
+        if index == 9:
+            self._refresh_pdf_status()
 
     def _update_controls_enabled(self, enabled: bool):
         for btn in [
@@ -643,16 +922,24 @@ class MainWindow(QMainWindow):
             self.btn_run_rna,
             self.btn_copy_rna,
             self.btn_export_rna,
+            self.btn_run_codon,
+            self.btn_run_pattern,
+            self.btn_pick_second,
+            self.btn_run_similarity,
+            self.btn_run_primer,
+            self.btn_pdf,
+            self.btn_pdf_page,
         ]:
             btn.setEnabled(enabled)
 
     def _launch_task(self, task_name: str, fn, *args):
         if self.active_worker is not None and self.active_worker.isRunning():
-            return
+            return False
         self.btn_upload.setEnabled(False)
         self.active_worker = AssemblyWorker(task_name, fn, *args)
         self.active_worker.completed.connect(self._on_task_completed)
         self.active_worker.start()
+        return True
 
     def _on_upload_fasta(self):
         default_dir = os.path.join(self.bridge.project_root, "backend", "sample_data")
@@ -684,6 +971,60 @@ class MainWindow(QMainWindow):
     def _on_run_dna_to_rna(self):
         self._launch_task("DNA_TO_RNA", self.bridge.run_dna_to_rna)
 
+    def _on_run_codon(self):
+        if not self.clean_sequence:
+            return
+        self._launch_task("TRANSLATE", self.bridge.run_codon_translation)
+
+    def _on_run_pattern(self):
+        if not self.clean_sequence:
+            return
+        pattern = self.txt_pattern.text()
+        self.pattern_result = None
+        self.pattern_table.setRowCount(0)
+        self.lbl_pattern_summary.setText("Searching...")
+        if not self._launch_task("PATTERN", self.bridge.run_pattern_search, pattern):
+            return
+
+    def _on_pick_second_fasta(self):
+        if not self.current_fasta_path:
+            return
+        default_dir = os.path.join(self.bridge.project_root, "backend", "sample_data")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Second FASTA File",
+            default_dir if os.path.isdir(default_dir) else self.bridge.project_root,
+            "FASTA Files (*.fasta *.fa *.fna *.txt);;All Files (*.*)",
+        )
+        if not path:
+            return
+        self.second_fasta_path = path
+        self._clear_similarity_view()
+        self.lbl_similarity_summary.setText(
+            f"Second FASTA selected: {os.path.basename(path)}. Previous comparison result was cleared."
+        )
+        self._on_run_similarity()
+
+    def _on_run_similarity(self):
+        if not self.current_fasta_path or not self.second_fasta_path:
+            QMessageBox.warning(self, "Sequence Similarity", "Load the first FASTA and select a second FASTA file.")
+            return
+        self._clear_similarity_view()
+        self._launch_task(
+            "SIMILARITY",
+            self.bridge.run_similarity,
+            self.current_fasta_path,
+            self.second_fasta_path,
+        )
+
+    def _on_run_primer(self):
+        if not self.clean_sequence:
+            return
+        self.primer_result = None
+        self.primer_table.setRowCount(0)
+        self.lbl_primer_summary.setText("Scanning candidate windows...")
+        self._launch_task("PRIMER_TM", self.bridge.run_primer_tm, self.spin_primer_len.value())
+
     def _on_task_completed(self, task_name: str, res: dict):
         self.btn_upload.setEnabled(True)
         if res.get("STATUS") != "OK":
@@ -692,8 +1033,19 @@ class MainWindow(QMainWindow):
             pos = res.get("ERROR_POS", "0")
             detail = f"{msg}\n\nError Code: {code}"
             if pos != "0":
-                detail += f"\nFile Byte Offset: {pos}"
+                if code == "ERR_INVALID_PATTERN":
+                    detail += f"\nPattern position: {pos}"
+                else:
+                    detail += f"\nFile byte offset: {pos}"
             QMessageBox.critical(self, "DNA Analyzer Error", detail)
+            if task_name == "PATTERN":
+                self.lbl_pattern_summary.setText(msg)
+            elif task_name == "SIMILARITY":
+                self.lbl_similarity_summary.setText(msg)
+            elif task_name == "PRIMER_TM":
+                self.lbl_primer_summary.setText(msg)
+            elif task_name == "TRANSLATE":
+                self.lbl_codon_summary.setText(msg)
             return
 
         if task_name == "STATS":
@@ -706,8 +1058,17 @@ class MainWindow(QMainWindow):
             self._apply_rev_comp_result(res)
         elif task_name == "DNA_TO_RNA":
             self._apply_rna_result(res)
+        elif task_name == "TRANSLATE":
+            self._apply_codon_result(res)
+        elif task_name == "PATTERN":
+            self._apply_pattern_result(res)
+        elif task_name == "SIMILARITY":
+            self._apply_similarity_result(res)
+        elif task_name == "PRIMER_TM":
+            self._apply_primer_result(res)
 
     def _apply_stats_result(self, res: dict):
+        self.stats_result = res
         self.current_header = res.get("HEADER", "Record")
         self.clean_sequence = res.get("CLEAN_SEQUENCE", "")
         seq_len = int(res.get("SEQUENCE_LENGTH", "0"))
@@ -742,21 +1103,52 @@ class MainWindow(QMainWindow):
         self.spin_win_size.setMaximum(max(1, seq_len))
         self.spin_win_size.setValue(min(100, max(1, seq_len)))
         self.spin_step_size.setValue(min(25, max(1, seq_len // 4 if seq_len >= 4 else 1)))
+        self.spin_primer_len.setMaximum(max(1, seq_len))
+        self.spin_primer_len.setValue(min(20, max(1, seq_len)))
 
         self.last_windows = []
+        self.gc_result = None
         self.gc_chart.set_windows([])
         self.gc_table.setRowCount(0)
+        self.lbl_gc_summary.setText("Ready")
         self.rev_comp_sequence = ""
+        self.rev_result = None
         self.txt_rc_seq.clear()
+        self.lbl_rc_meta.setText("Reverse Complement Sequence (5' -> 3'):")
         self.rna_sequence = ""
+        self.rna_result = None
         self.txt_rna_seq.clear()
+        self.lbl_rna_meta.setText("Transcribed RNA Sequence (5' -> 3'):")
         self.txt_hex_preview.clear()
+        self.comp_orig_val.setText("0 B")
+        self.comp_orig_sub.setText("1 byte per nucleotide")
+        self.comp_bin_val.setText("0 B")
+        self.comp_bin_sub.setText("18B header + Part 1 + Part 2")
+        self.comp_save_val.setText("0.00%")
+        self.comp_save_sub.setText("Net file savings: 0.00%")
+        self.comp_ver_val.setText("Pending")
+        self.comp_ver_sub.setText("XOR Checksum: --")
+        self._clear_codon_view()
+        self._clear_pattern_view()
+        self._clear_similarity_view()
+        self._clear_primer_view()
+        if self.second_fasta_path:
+            self.lbl_similarity_summary.setText(
+                f"Sequence 1 changed to {self.current_header} ({seq_len:,} bp). "
+                f"Second FASTA remains {os.path.basename(self.second_fasta_path)}. "
+                "The previous comparison result was cleared. Run the comparison again."
+            )
+        else:
+            self.lbl_similarity_summary.setText(
+                f"Sequence 1: {self.current_header} ({seq_len:,} bp). Select a second FASTA."
+            )
 
         self._update_controls_enabled(True)
         self._switch_page(0)
 
     def _apply_gc_window_result(self, res: dict):
         windows = res.get("WINDOWS", [])
+        self.gc_result = res
         self.last_windows = windows
         self.gc_chart.set_windows(windows)
         self.lbl_gc_summary.setText(f"Computed {len(windows):,} windows")
@@ -787,17 +1179,194 @@ class MainWindow(QMainWindow):
         self.txt_hex_preview.setPlainText(res.get("HEX_PREVIEW", ""))
 
     def _apply_rev_comp_result(self, res: dict):
+        self.rev_result = res
         self.rev_comp_sequence = res.get("RESULT_SEQUENCE", "")
         seq_len = int(res.get("SEQUENCE_LENGTH", "0"))
         self.lbl_rc_meta.setText(f"Reverse Complement Sequence (5' -> 3') — {seq_len:,} bp:")
         self.txt_rc_seq.setPlainText(format_seq_blocks(self.rev_comp_sequence))
 
     def _apply_rna_result(self, res: dict):
+        self.rna_result = res
         self.rna_sequence = res.get("RESULT_SEQUENCE", "")
         seq_len = int(res.get("SEQUENCE_LENGTH", "0"))
         u_cnt = int(res.get("URACIL_COUNT", "0"))
         self.lbl_rna_meta.setText(f"Transcribed mRNA Sequence (5' -> 3') — {seq_len:,} nt  |  {u_cnt:,} Uracils (U):")
         self.txt_rna_seq.setPlainText(format_seq_blocks(self.rna_sequence))
+
+    def _clear_codon_view(self):
+        self.codon_result = None
+        self.txt_codon_rna.clear()
+        self.codon_table.setRowCount(0)
+        self.codon_summary_table.setRowCount(0)
+        self.lbl_codon_summary.setText("Translation has not been run for this FASTA.")
+        self.lbl_codon_rna.setText("RNA sequence")
+
+    def _clear_pattern_view(self):
+        self.pattern_result = None
+        self.pattern_table.setRowCount(0)
+        self.lbl_pattern_summary.setText("Enter a pattern and click Search.")
+
+    def _clear_similarity_view(self):
+        self.similarity_result = None
+        self.similarity_table.setRowCount(0)
+
+    def _clear_primer_view(self):
+        self.primer_result = None
+        self.primer_table.setRowCount(0)
+        self.lbl_primer_summary.setText("Choose L and scan the loaded sequence.")
+
+    def _apply_codon_result(self, res: dict):
+        self.codon_result = res
+        rna = res.get("RESULT_SEQUENCE", "")
+        leftover_n = res.get("LEFTOVER_BASES", "0")
+        leftover_seq = res.get("LEFTOVER_SEQ", "")
+        trail = "No incomplete trailing codon."
+        if leftover_n not in ("0", ""):
+            trail = f"Incomplete trailing codon: {leftover_seq} ({leftover_n} base(s), not translated)."
+        self.lbl_codon_summary.setText(
+            "Coding-strand translation from base 1. "
+            f"Complete codons: {res.get('COMPLETE_CODONS', '0')}    "
+            f"Stop codons: {res.get('STOP_CODONS', '0')}    "
+            f"Ambiguous codons: {res.get('AMBIGUOUS_CODONS', '0')}    "
+            f"Leftover bases: {leftover_n}. {trail}"
+        )
+        self.lbl_codon_rna.setText(f"RNA sequence — {res.get('SEQUENCE_LENGTH', '0')} nt")
+        self.txt_codon_rna.setPlainText(format_seq_blocks(rna))
+        self._fill_table(self.codon_table, res.get("ORDERED", []), ["index", "start", "codon", "symbol", "name"])
+        self._fill_table(
+            self.codon_summary_table,
+            res.get("SUMMARY", []),
+            ["codon", "symbol", "name", "count", "positions"],
+        )
+
+    def _apply_pattern_result(self, res: dict):
+        self.pattern_result = res
+        count = res.get("MATCH_COUNT", "0")
+        pattern = res.get("PATTERN", "")
+        matches = res.get("MATCHES", [])
+        if count == "0":
+            self.lbl_pattern_summary.setText(f"No matches found for pattern {pattern}.")
+        else:
+            self.lbl_pattern_summary.setText(
+                f"Pattern {pattern} ({res.get('PATTERN_LENGTH', '')} bp): {count} match(es), including overlaps."
+            )
+        self._fill_table(self.pattern_table, matches, ["index", "start", "end", "pattern"])
+
+    def _apply_similarity_result(self, res: dict):
+        self.similarity_result = res
+        self.lbl_similarity_summary.setText(
+            "Positional Similarity (not an alignment; indels are not modeled). "
+            f"Sequence 1: {res.get('SEQ1_HEADER', '')} ({res.get('SEQ1_LENGTH', '')} bp). "
+            f"Sequence 2: {res.get('SEQ2_HEADER', '')} ({res.get('SEQ2_LENGTH', '')} bp). "
+            f"Matches: {res.get('MATCH_COUNT', '')}. "
+            f"Mismatches: {res.get('MISMATCH_COUNT', '')}. "
+            f"Unpaired: {res.get('UNPAIRED_COUNT', '')}. "
+            f"Compared positions: {res.get('COMPARED_POSITIONS', '')}. "
+            f"Similarity: {res.get('SIMILARITY_PERCENT', '')}%."
+        )
+        header1 = res.get("SEQ1_HEADER", "Sequence 1")
+        header2 = res.get("SEQ2_HEADER", "Sequence 2")
+        display_rows = []
+        for row in res.get("ROWS", []):
+            if row["kind"] == "UNPAIRED":
+                seq_name = header1 if row["sequence"] == "1" else header2
+                base1 = row["base"] if row["sequence"] == "1" else ""
+                base2 = row["base"] if row["sequence"] == "2" else ""
+                display_rows.append({
+                    "kind": "Unpaired",
+                    "position": row["position"],
+                    "sequence": seq_name,
+                    "base1": base1,
+                    "base2": base2,
+                })
+            else:
+                label = "Match" if row["kind"] == "MATCH" else "Mismatch"
+                display_rows.append({
+                    "kind": label,
+                    "position": row["position"],
+                    "sequence": "",
+                    "base1": row["base1"],
+                    "base2": row["base2"],
+                })
+        self._fill_table(
+            self.similarity_table,
+            display_rows,
+            ["kind", "position", "sequence", "base1", "base2"],
+        )
+
+    def _apply_primer_result(self, res: dict):
+        self.primer_result = res
+        self.lbl_primer_summary.setText(
+            "Basic Wallace-rule Tm estimate. "
+            "This educational estimate does not account for salt concentration, primer concentration, "
+            "or nearest-neighbor effects, and candidates have not been validated for laboratory use. "
+            f"L = {res.get('CANDIDATE_LENGTH', '')}. "
+            f"Windows scanned: {res.get('TOTAL_WINDOWS', '')}. "
+            f"Valid candidates: {res.get('VALID_CANDIDATES', '')}. "
+            f"Ambiguous windows skipped: {res.get('AMBIGUOUS_WINDOWS', '')}. "
+            f"Minimum Tm: {res.get('MIN_TM', '')}. "
+            f"Maximum Tm: {res.get('MAX_TM', '')}. "
+            f"Average Tm: {res.get('AVERAGE_TM', '')}."
+        )
+        self._fill_table(
+            self.primer_table,
+            res.get("CANDIDATES", []),
+            ["index", "sequence", "start", "end", "count_a", "count_t", "count_g", "count_c", "tm"],
+        )
+
+    def _refresh_pdf_status(self):
+        if not self.stats_result:
+            self.lbl_pdf_status.setText("Load a FASTA to generate a report.")
+            return
+        flags = [
+            ("GC window analysis", self.gc_result is not None),
+            ("Reverse complement", self.rev_result is not None),
+            ("DNA-to-RNA", self.rna_result is not None),
+            ("Codon translation", self.codon_result is not None),
+            ("Pattern search", self.pattern_result is not None),
+            ("Primer Tm analysis", self.primer_result is not None),
+            ("Positional similarity", self.similarity_result is not None),
+        ]
+        lines = [f"Loaded: {os.path.basename(self.current_fasta_path)}"]
+        for name, ready in flags:
+            lines.append(f"{name}: {'included' if ready else 'not run'}")
+        self.lbl_pdf_status.setText("\n".join(lines))
+
+    def _on_generate_pdf(self):
+        if not self.stats_result or not self.current_fasta_path:
+            QMessageBox.warning(self, "PDF Report", "Load a FASTA file before generating a report.")
+            return
+        default_name = os.path.splitext(os.path.basename(self.current_fasta_path))[0] + "_report.pdf"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save PDF Report",
+            os.path.join(self.bridge.project_root, default_name),
+            "PDF Files (*.pdf)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+        from datetime import datetime
+        payload = {
+            "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "filename": self.current_fasta_path,
+            "clean_sequence": self.clean_sequence,
+            "stats": self.stats_result,
+            "gc": self.gc_result,
+            "rev": self.rev_result,
+            "rna": self.rna_result,
+            "codon": self.codon_result,
+            "pattern": self.pattern_result,
+            "primer": self.primer_result,
+            "similarity": self.similarity_result,
+        }
+        try:
+            write_analysis_pdf(path, payload)
+        except Exception as exc:
+            QMessageBox.critical(self, "PDF Report", str(exc))
+            return
+        QMessageBox.information(self, "PDF Report", f"Saved PDF report to:\n{path}")
 
     def _copy_text(self, text: str):
         if not text:

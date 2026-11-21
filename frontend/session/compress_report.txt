@@ -1,6 +1,6 @@
 STATUS=OK
 OPERATION=COMPRESS
-BIN_PATH=C:\Users\F I ENTERPRISES\Downloads\DNAAnalyzer_Tier1\frontend\session\compressed_sequence.dna
+BIN_PATH=C:\Users\F I ENTERPRISES\Downloads\DNA-Analyzer-Tool\frontend\session\compressed_sequence.dna
 ORIGINAL_LENGTH=39
 ORIGINAL_BYTES=39
 PART1_BASE_BYTES=10

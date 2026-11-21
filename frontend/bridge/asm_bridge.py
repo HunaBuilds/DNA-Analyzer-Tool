@@ -106,6 +106,8 @@ class AssemblyBridge:
                         "gc_count": int(parts[2]),
                         "gc_pct": float(parts[3]),
                         "at_pct": float(parts[4]),
+                        "gc_pct_text": parts[3],
+                        "at_pct_text": parts[4],
                     })
             res["WINDOWS"] = windows
         return res
@@ -158,6 +160,154 @@ class AssemblyBridge:
         if res.get("STATUS") == "OK" and os.path.isfile(seq_out_path):
             with open(seq_out_path, "r", encoding="utf-8") as sf:
                 res["RESULT_SEQUENCE"] = sf.read().strip()
+        return res
+
+    def _read_text(self, path: str) -> str:
+        if not os.path.isfile(path):
+            return ""
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+
+    def _detail_lines(self, path: str) -> list:
+        text = self._read_text(path)
+        return [line.strip() for line in text.splitlines() if line.strip()]
+
+    def run_codon_translation(self) -> dict:
+        clean_path = os.path.join(self.session_dir, "session_clean.seq")
+        report_path = os.path.join(self.session_dir, "codon_report.txt")
+        detail_path = os.path.join(self.session_dir, "codon_detail.txt")
+        seq_out_path = os.path.join(self.session_dir, "codon_rna.seq")
+        codon_path = os.path.join(self.project_root, "backend", "data", "codon_table.csv")
+        args = [
+            "-op", "TRANSLATE",
+            "-in", clean_path,
+            "-raw",
+            "-out", report_path,
+            "-detail", detail_path,
+            "-seqout", seq_out_path,
+            "-codon", codon_path,
+        ]
+        res = self._invoke(args, report_path)
+        if res.get("STATUS") == "OK":
+            if os.path.isfile(seq_out_path):
+                res["RESULT_SEQUENCE"] = self._read_text(seq_out_path).strip()
+            ordered = []
+            summary = []
+            for line in self._detail_lines(detail_path):
+                parts = line.split("|")
+                if parts[0] == "ORD" and len(parts) >= 6:
+                    ordered.append({
+                        "index": parts[1],
+                        "start": parts[2],
+                        "codon": parts[3],
+                        "symbol": parts[4],
+                        "name": parts[5],
+                    })
+                elif parts[0] == "SUM" and len(parts) >= 6:
+                    summary.append({
+                        "codon": parts[1],
+                        "symbol": parts[2],
+                        "name": parts[3],
+                        "count": parts[4],
+                        "positions": parts[5],
+                    })
+            res["ORDERED"] = ordered
+            res["SUMMARY"] = summary
+            res["DETAIL_TEXT"] = self._read_text(detail_path)
+        return res
+
+    def run_pattern_search(self, pattern: str) -> dict:
+        clean_path = os.path.join(self.session_dir, "session_clean.seq")
+        report_path = os.path.join(self.session_dir, "pattern_report.txt")
+        detail_path = os.path.join(self.session_dir, "pattern_detail.txt")
+        args = [
+            "-op", "PATTERN",
+            "-in", clean_path,
+            "-raw",
+            "-out", report_path,
+            "-detail", detail_path,
+            "-pattern", pattern,
+        ]
+        res = self._invoke(args, report_path)
+        if res.get("STATUS") == "OK":
+            matches = []
+            for line in self._detail_lines(detail_path):
+                parts = line.split("|")
+                if parts[0] == "MATCH" and len(parts) >= 5:
+                    matches.append({
+                        "index": parts[1],
+                        "start": parts[2],
+                        "end": parts[3],
+                        "pattern": parts[4],
+                    })
+            res["MATCHES"] = matches
+        return res
+
+    def run_similarity(self, fasta_path: str, second_fasta_path: str) -> dict:
+        report_path = os.path.join(self.session_dir, "similarity_report.txt")
+        detail_path = os.path.join(self.session_dir, "similarity_detail.txt")
+        args = [
+            "-op", "SIMILARITY",
+            "-in", fasta_path,
+            "-in2", second_fasta_path,
+            "-out", report_path,
+            "-detail", detail_path,
+        ]
+        res = self._invoke(args, report_path)
+        if res.get("STATUS") == "OK":
+            rows = []
+            for line in self._detail_lines(detail_path):
+                parts = line.split("|")
+                if parts[0] != "ROW" or len(parts) < 5:
+                    continue
+                kind = parts[1]
+                if kind == "UNPAIRED":
+                    rows.append({
+                        "kind": kind,
+                        "position": parts[2],
+                        "sequence": parts[3],
+                        "base": parts[4],
+                    })
+                else:
+                    rows.append({
+                        "kind": kind,
+                        "position": parts[2],
+                        "base1": parts[3],
+                        "base2": parts[4],
+                    })
+            res["ROWS"] = rows
+        return res
+
+    def run_primer_tm(self, length: int) -> dict:
+        clean_path = os.path.join(self.session_dir, "session_clean.seq")
+        report_path = os.path.join(self.session_dir, "primer_report.txt")
+        detail_path = os.path.join(self.session_dir, "primer_detail.txt")
+        args = [
+            "-op", "PRIMER_TM",
+            "-in", clean_path,
+            "-raw",
+            "-len", str(length),
+            "-out", report_path,
+            "-detail", detail_path,
+        ]
+        res = self._invoke(args, report_path)
+        if res.get("STATUS") == "OK":
+            candidates = []
+            for line in self._detail_lines(detail_path):
+                parts = line.split("|", 9)
+                if parts[0] == "CAND" and len(parts) >= 10:
+                    candidates.append({
+                        "index": parts[1],
+                        "start": parts[2],
+                        "end": parts[3],
+                        "count_a": parts[4],
+                        "count_t": parts[5],
+                        "count_g": parts[6],
+                        "count_c": parts[7],
+                        "tm": parts[8],
+                        "sequence": parts[9],
+                    })
+            res["CANDIDATES"] = candidates
         return res
 
     def export_binary_copy(self, dest_path: str) -> bool:

@@ -1,0 +1,6 @@
+STATUS=OK
+OPERATION=PATTERN
+PATTERN=AGC
+PATTERN_LENGTH=3
+MATCH_COUNT=3
+DETAIL_PATH=C:\Users\F I ENTERPRISES\Downloads\DNA-Analyzer-Tool\frontend\session\pattern_detail.txt

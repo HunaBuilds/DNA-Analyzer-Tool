@@ -1,7 +1,7 @@
 STATUS=OK
 OPERATION=STATS
-HEADER=UNKNOWN_RECORD
-CLEAN_SEQ_PATH=C:\Users\F I ENTERPRISES\Downloads\DNAAnalyzer_Tier1\frontend\session\session_clean.seq
+HEADER=NC_000001_Sample_Sequence_With_Ambiguity
+CLEAN_SEQ_PATH=C:\Users\F I ENTERPRISES\Downloads\DNA-Analyzer-Tool\frontend\session\session_clean.seq
 SEQUENCE_LENGTH=39
 VALID_CANONICAL=37
 COUNT_A=10

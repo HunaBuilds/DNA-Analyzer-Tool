@@ -13,12 +13,23 @@ flagSeqOut          BYTE "-seqout", 0
 flagWin             BYTE "-win", 0
 flagStep            BYTE "-step", 0
 flagRaw             BYTE "-raw", 0
+flagIn2             BYTE "-in2", 0
+flagDetail          BYTE "-detail", 0
+flagCodon           BYTE "-codon", 0
+flagPattern         BYTE "-pattern", 0
+flagLen             BYTE "-len", 0
 
 opNameStats         BYTE "STATS", 0
 opNameGcWin         BYTE "GC_WIN", 0
 opNameCompress      BYTE "COMPRESS", 0
 opNameRevComp       BYTE "REV_COMP", 0
 opNameDnaToRna      BYTE "DNA_TO_RNA", 0
+opNameTranslate     BYTE "TRANSLATE", 0
+opNamePattern       BYTE "PATTERN", 0
+opNameSimilarity    BYTE "SIMILARITY", 0
+opNamePrimer        BYTE "PRIMER_TM", 0
+
+tokenTruncated      DWORD 0
 
 defaultOutPath      BYTE "dna_output.txt", 0
 strDotChar          BYTE ".", 0
@@ -37,6 +48,14 @@ codeBufferLimit     BYTE "ERR_BUFFER_LIMIT", 0
 codeInvalidParams   BYTE "ERR_INVALID_PARAMS", 0
 codeAmbiguousN      BYTE "ERR_AMBIGUOUS_N", 0
 codeFileWrite       BYTE "ERR_FILE_WRITE", 0
+codeCodonMissing    BYTE "ERR_CODON_MISSING", 0
+codeCodonInvalid    BYTE "ERR_CODON_INVALID", 0
+codeEmptyPattern    BYTE "ERR_EMPTY_PATTERN", 0
+codeInvalidPattern  BYTE "ERR_INVALID_PATTERN", 0
+codeCompareUnavail  BYTE "ERR_COMPARE_UNAVAILABLE", 0
+codeInvalidLength   BYTE "ERR_INVALID_LENGTH", 0
+codePatternLength   BYTE "ERR_PATTERN_LENGTH", 0
+codeSecondFile      BYTE "ERR_SECOND_FILE", 0
 codeUnknown         BYTE "ERR_UNKNOWN", 0
 
 msgFileOpen         BYTE "Unable to open input sequence file", 0
@@ -47,6 +66,14 @@ msgBufferLimit      BYTE "Heap memory allocation failed for sequence buffer", 0
 msgInvalidParams    BYTE "Missing or invalid command-line arguments", 0
 msgAmbiguousN       BYTE "Ambiguous base encountered in strict canonical mode", 0
 msgFileWrite        BYTE "Unable to create or write output report file", 0
+msgCodonMissing     BYTE "Codon table CSV file was not found", 0
+msgCodonInvalid     BYTE "Codon table CSV is malformed or incomplete; expected 64 unique RNA codons and the required columns", 0
+msgEmptyPattern     BYTE "Pattern is empty", 0
+msgInvalidPattern   BYTE "Pattern must contain only A, T, G, C, or N", 0
+msgCompareUnavail   BYTE "Comparison is unavailable because one or both sequences are empty", 0
+msgInvalidLength    BYTE "Candidate length must be an integer from 1 through the sequence length", 0
+msgPatternLength    BYTE "Pattern exceeds the maximum supported length", 0
+msgSecondFile       BYTE "Unable to open the second FASTA file", 0
 msgUnknown          BYTE "An unexpected processing error occurred", 0
 
 .data?
@@ -118,6 +145,103 @@ no_token:
     xor eax, eax
     ret
 ReadNextToken ENDP
+
+ReadBoundedToken PROC USES esi edi ebx, pCursor:DWORD, pOut:DWORD, maxLen:DWORD
+    mov tokenTruncated, 0
+    mov esi, pCursor
+    mov edi, pOut
+    mov ebx, maxLen
+    cmp ebx, 2
+    jl rbt_none
+
+rbt_skip:
+    mov al, [esi]
+    cmp al, 0
+    je rbt_none
+    cmp al, ASCII_SPACE
+    je rbt_adv
+    cmp al, ASCII_TAB
+    je rbt_adv
+    jmp rbt_start
+
+rbt_adv:
+    inc esi
+    jmp rbt_skip
+
+rbt_start:
+    dec ebx
+    cmp al, ASCII_QUOTE
+    je rbt_quoted
+
+rbt_unq:
+    mov al, [esi]
+    cmp al, 0
+    je rbt_finish
+    cmp al, ASCII_SPACE
+    je rbt_finish
+    cmp al, ASCII_TAB
+    je rbt_finish
+    cmp ebx, 0
+    je rbt_ov_unq
+    mov [edi], al
+    inc esi
+    inc edi
+    dec ebx
+    jmp rbt_unq
+
+rbt_ov_unq:
+    mov tokenTruncated, 1
+rbt_drain_unq:
+    mov al, [esi]
+    cmp al, 0
+    je rbt_finish
+    cmp al, ASCII_SPACE
+    je rbt_finish
+    cmp al, ASCII_TAB
+    je rbt_finish
+    inc esi
+    jmp rbt_drain_unq
+
+rbt_quoted:
+    inc esi
+rbt_qloop:
+    mov al, [esi]
+    cmp al, 0
+    je rbt_finish
+    cmp al, ASCII_QUOTE
+    je rbt_qend
+    cmp ebx, 0
+    je rbt_ov_q
+    mov [edi], al
+    inc esi
+    inc edi
+    dec ebx
+    jmp rbt_qloop
+
+rbt_ov_q:
+    mov tokenTruncated, 1
+rbt_drain_q:
+    mov al, [esi]
+    cmp al, 0
+    je rbt_finish
+    cmp al, ASCII_QUOTE
+    je rbt_qend
+    inc esi
+    jmp rbt_drain_q
+
+rbt_qend:
+    inc esi
+
+rbt_finish:
+    mov BYTE PTR [edi], 0
+    mov eax, esi
+    ret
+
+rbt_none:
+    mov BYTE PTR [edi], 0
+    xor eax, eax
+    ret
+ReadBoundedToken ENDP
 
 CopyZString PROC USES esi edi ecx, pDest:DWORD, pSrc:DWORD, maxLen:DWORD
     mov edi, pDest
@@ -394,8 +518,36 @@ try_rev_comp:
 try_dna_rna:
     invoke StrCompareI, ADDR tokenBuf, ADDR opNameDnaToRna
     test eax, eax
-    jz invalid_cli
+    jz try_translate
     mov (SESSION_CTX PTR [ebx]).opCode, OP_DNA_TO_RNA
+    jmp cli_loop
+
+try_translate:
+    invoke StrCompareI, ADDR tokenBuf, ADDR opNameTranslate
+    test eax, eax
+    jz try_pattern
+    mov (SESSION_CTX PTR [ebx]).opCode, OP_TRANSLATE
+    jmp cli_loop
+
+try_pattern:
+    invoke StrCompareI, ADDR tokenBuf, ADDR opNamePattern
+    test eax, eax
+    jz try_similarity
+    mov (SESSION_CTX PTR [ebx]).opCode, OP_PATTERN
+    jmp cli_loop
+
+try_similarity:
+    invoke StrCompareI, ADDR tokenBuf, ADDR opNameSimilarity
+    test eax, eax
+    jz try_primer
+    mov (SESSION_CTX PTR [ebx]).opCode, OP_SIMILARITY
+    jmp cli_loop
+
+try_primer:
+    invoke StrCompareI, ADDR tokenBuf, ADDR opNamePrimer
+    test eax, eax
+    jz invalid_cli
+    mov (SESSION_CTX PTR [ebx]).opCode, OP_PRIMER_TM
     jmp cli_loop
 
 check_in_flag:
@@ -473,13 +625,74 @@ check_win_flag:
 check_step_flag:
     invoke StrCompareI, ADDR tokenBuf, ADDR flagStep
     test eax, eax
-    jz cli_loop
+    jz check_in2_flag
     invoke ReadNextToken, esi, ADDR tokenBuf
     test eax, eax
     jz invalid_cli
     mov esi, eax
     invoke StrToUInt32, ADDR tokenBuf
     mov (SESSION_CTX PTR [ebx]).stepSize, eax
+    jmp cli_loop
+
+check_in2_flag:
+    invoke StrCompareI, ADDR tokenBuf, ADDR flagIn2
+    test eax, eax
+    jz check_detail_flag
+    invoke ReadNextToken, esi, ADDR tokenBuf
+    test eax, eax
+    jz invalid_cli
+    mov esi, eax
+    lea eax, (SESSION_CTX PTR [ebx]).inPath2
+    invoke CopyZString, eax, ADDR tokenBuf, MAX_PATH_LEN
+    jmp cli_loop
+
+check_detail_flag:
+    invoke StrCompareI, ADDR tokenBuf, ADDR flagDetail
+    test eax, eax
+    jz check_codon_flag
+    invoke ReadNextToken, esi, ADDR tokenBuf
+    test eax, eax
+    jz invalid_cli
+    mov esi, eax
+    lea eax, (SESSION_CTX PTR [ebx]).detailPath
+    invoke CopyZString, eax, ADDR tokenBuf, MAX_PATH_LEN
+    jmp cli_loop
+
+check_codon_flag:
+    invoke StrCompareI, ADDR tokenBuf, ADDR flagCodon
+    test eax, eax
+    jz check_pattern_flag
+    invoke ReadNextToken, esi, ADDR tokenBuf
+    test eax, eax
+    jz invalid_cli
+    mov esi, eax
+    lea eax, (SESSION_CTX PTR [ebx]).codonPath
+    invoke CopyZString, eax, ADDR tokenBuf, MAX_PATH_LEN
+    jmp cli_loop
+
+check_pattern_flag:
+    invoke StrCompareI, ADDR tokenBuf, ADDR flagPattern
+    test eax, eax
+    jz check_len_flag
+    lea eax, (SESSION_CTX PTR [ebx]).patternBuf
+    invoke ReadBoundedToken, esi, eax, PATTERN_MAX
+    test eax, eax
+    jz invalid_cli
+    mov esi, eax
+    cmp tokenTruncated, 0
+    je cli_loop
+    jmp pattern_too_long
+
+check_len_flag:
+    invoke StrCompareI, ADDR tokenBuf, ADDR flagLen
+    test eax, eax
+    jz cli_loop
+    invoke ReadNextToken, esi, ADDR tokenBuf
+    test eax, eax
+    jz invalid_cli
+    mov esi, eax
+    invoke StrToUInt32, ADDR tokenBuf
+    mov (SESSION_CTX PTR [ebx]).winSize, eax
     jmp cli_loop
 
 validate_cli:
@@ -504,6 +717,16 @@ invalid_cli:
 
 set_param_err:
     mov (SESSION_CTX PTR [ebx]).errCode, ERR_INVALID_PARAMS
+    xor eax, eax
+    ret
+
+pattern_too_long:
+    cmp BYTE PTR (SESSION_CTX PTR [ebx]).outPath[0], 0
+    jne set_pat_len_err
+    lea eax, (SESSION_CTX PTR [ebx]).outPath
+    invoke CopyZString, eax, ADDR defaultOutPath, MAX_PATH_LEN
+set_pat_len_err:
+    mov (SESSION_CTX PTR [ebx]).errCode, ERR_PATTERN_LENGTH
     xor eax, eax
     ret
 ParseCommandLine ENDP
@@ -532,6 +755,22 @@ WriteErrorReport PROC USES ebx ecx edx esi edi, pCtx:DWORD
     je use_ambiguous_n
     cmp eax, ERR_FILE_WRITE
     je use_file_write
+    cmp eax, ERR_CODON_MISSING
+    je use_codon_missing
+    cmp eax, ERR_CODON_INVALID
+    je use_codon_invalid
+    cmp eax, ERR_EMPTY_PATTERN
+    je use_empty_pattern
+    cmp eax, ERR_INVALID_PATTERN
+    je use_invalid_pattern
+    cmp eax, ERR_COMPARE_UNAVAILABLE
+    je use_compare_unavail
+    cmp eax, ERR_INVALID_LENGTH
+    je use_invalid_length
+    cmp eax, ERR_PATTERN_LENGTH
+    je use_pattern_length
+    cmp eax, ERR_SECOND_FILE
+    je use_second_file
 
     lea esi, codeUnknown
     lea edi, msgUnknown
@@ -575,6 +814,46 @@ use_ambiguous_n:
 use_file_write:
     lea esi, codeFileWrite
     lea edi, msgFileWrite
+    jmp build_err_body
+
+use_codon_missing:
+    lea esi, codeCodonMissing
+    lea edi, msgCodonMissing
+    jmp build_err_body
+
+use_codon_invalid:
+    lea esi, codeCodonInvalid
+    lea edi, msgCodonInvalid
+    jmp build_err_body
+
+use_empty_pattern:
+    lea esi, codeEmptyPattern
+    lea edi, msgEmptyPattern
+    jmp build_err_body
+
+use_invalid_pattern:
+    lea esi, codeInvalidPattern
+    lea edi, msgInvalidPattern
+    jmp build_err_body
+
+use_compare_unavail:
+    lea esi, codeCompareUnavail
+    lea edi, msgCompareUnavail
+    jmp build_err_body
+
+use_invalid_length:
+    lea esi, codeInvalidLength
+    lea edi, msgInvalidLength
+    jmp build_err_body
+
+use_pattern_length:
+    lea esi, codePatternLength
+    lea edi, msgPatternLength
+    jmp build_err_body
+
+use_second_file:
+    lea esi, codeSecondFile
+    lea edi, msgSecondFile
 
 build_err_body:
     invoke AppendZString, ADDR errReportBuf, esi
@@ -646,9 +925,23 @@ free_out:
 free_bin:
     mov eax, (SESSION_CTX PTR [ebx]).pBinBuf
     test eax, eax
-    jz cleanup_done
+    jz free_seq2
     invoke HeapFree, hHeap, 0, eax
     mov (SESSION_CTX PTR [ebx]).pBinBuf, 0
+
+free_seq2:
+    mov eax, (SESSION_CTX PTR [ebx]).pCleanSeq2
+    test eax, eax
+    jz free_hdr2
+    invoke HeapFree, hHeap, 0, eax
+    mov (SESSION_CTX PTR [ebx]).pCleanSeq2, 0
+
+free_hdr2:
+    mov eax, (SESSION_CTX PTR [ebx]).pHeaderBuf2
+    test eax, eax
+    jz cleanup_done
+    invoke HeapFree, hHeap, 0, eax
+    mov (SESSION_CTX PTR [ebx]).pHeaderBuf2, 0
 
 cleanup_done:
     ret
@@ -689,6 +982,14 @@ dispatch_op:
     je run_rev_comp
     cmp eax, OP_DNA_TO_RNA
     je run_dna_rna
+    cmp eax, OP_TRANSLATE
+    je run_translate
+    cmp eax, OP_PATTERN
+    je run_pattern
+    cmp eax, OP_SIMILARITY
+    je run_similarity
+    cmp eax, OP_PRIMER_TM
+    je run_primer
     mov ctx.errCode, ERR_INVALID_PARAMS
     jmp fatal_exit
 
@@ -710,6 +1011,22 @@ run_rev_comp:
 
 run_dna_rna:
     invoke ConvertDnaToRna, ADDR ctx
+    jmp check_op_status
+
+run_translate:
+    invoke TranslateCodons, ADDR ctx
+    jmp check_op_status
+
+run_pattern:
+    invoke SearchDnaPattern, ADDR ctx
+    jmp check_op_status
+
+run_similarity:
+    invoke CompareSequences, ADDR ctx
+    jmp check_op_status
+
+run_primer:
+    invoke ScanPrimerTm, ADDR ctx
 
 check_op_status:
     test eax, eax

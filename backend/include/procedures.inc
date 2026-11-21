@@ -13,9 +13,20 @@ StrToUInt32                 PROTO, pStr:DWORD
 
 LoadAndParseFasta           PROTO, pCtx:DWORD
 LoadRawSequence             PROTO, pCtx:DWORD
+LoadSecondFasta             PROTO, pCtx:DWORD
 
 ComputeDnaStats             PROTO, pCtx:DWORD
 RunGcWindow                 PROTO, pCtx:DWORD
 CompressTwoBit              PROTO, pCtx:DWORD
 ComputeReverseComplement    PROTO, pCtx:DWORD
 ConvertDnaToRna             PROTO, pCtx:DWORD
+TranslateCodons             PROTO, pCtx:DWORD
+SearchDnaPattern            PROTO, pCtx:DWORD
+CompareSequences            PROTO, pCtx:DWORD
+ScanPrimerTm                PROTO, pCtx:DWORD
+
+WriteFileBytes              PROTO, hFile:DWORD, pBuf:DWORD, nBytes:DWORD
+WriteFileZStr               PROTO, hFile:DWORD, pStr:DWORD
+WriteFileCrlf               PROTO, hFile:DWORD
+WriteFileUInt32             PROTO, hFile:DWORD, value:DWORD
+WriteFileScaledPct          PROTO, hFile:DWORD, scaledVal:DWORD

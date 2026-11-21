@@ -20,6 +20,14 @@ SESSION_CTX STRUCT
     binPath         BYTE MAX_PATH_LEN DUP(?)
     cleanPath       BYTE MAX_PATH_LEN DUP(?)
     seqOutPath      BYTE MAX_PATH_LEN DUP(?)
+    pCleanSeq2      DWORD ?
+    cleanLen2       DWORD ?
+    pHeaderBuf2     DWORD ?
+    headerLen2      DWORD ?
+    inPath2         BYTE MAX_PATH_LEN DUP(?)
+    detailPath      BYTE MAX_PATH_LEN DUP(?)
+    codonPath       BYTE MAX_PATH_LEN DUP(?)
+    patternBuf      BYTE PATTERN_MAX DUP(?)
 SESSION_CTX ENDS
 
 STATS_RESULT STRUCT
