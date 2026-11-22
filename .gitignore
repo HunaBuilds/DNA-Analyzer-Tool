@@ -1,1 +1,31 @@
+# Python bytecode and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local IDE files
 .vs/
+.idea/
+.vscode/
+
+# MASM build products
+backend/build/*
+!backend/build/.gitkeep
+
+# Runtime-generated analysis files
+frontend/session/*
+!frontend/session/.gitkeep
+gc_windows.csv
+codon_rna.seq
+encoded_sequence.dna
+reverse_complement.seq
+transcribed_rna.seq
+compressed_sequence.dna
+session_clean.seq
+*_report.txt
+*_detail.txt
+
+# Local exports and logs
+*.log
+*.tmp

@@ -1,6 +1,0 @@
-STATUS=OK
-OPERATION=PATTERN
-PATTERN=ATG
-PATTERN_LENGTH=3
-MATCH_COUNT=1
-DETAIL_PATH=C:\Users\F I ENTERPRISES\Downloads\DNA-Analyzer-Tool\frontend\session\pattern_detail.txt
