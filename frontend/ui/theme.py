@@ -55,15 +55,10 @@ QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
 /* ---- sidebar ---- */
 QFrame#Sidebar { background-color: @SURFACE@; border-right: 1px solid @BORDER@; }
-QLabel#BrandTitle { font-size: 17px; font-weight: 700; color: @NAVY@; }
+QLabel#BrandTitle { font-size: 16px; font-weight: 700; color: @NAVY@; }
 QLabel#BrandSub { font-size: 11px; color: @MUTED@; }
 QLabel#NavSection { color: @FAINT@; font-size: 11px; font-weight: 600; padding: 12px 10px 4px 10px; }
-QPushButton.NavBtn {
-    background-color: transparent; color: @MUTED@; border: none; border-radius: 8px;
-    padding: 8px 12px; text-align: left; font-size: 13px; font-weight: 500;
-}
-QPushButton.NavBtn:hover { background-color: #F1F5FA; color: @INK@; }
-QPushButton.NavBtn[active="true"] { background-color: @TINT@; color: @NAVY@; font-weight: 600; }
+QFrame#NavPill { background-color: @TINT@; border: none; border-radius: 8px; }
 
 /* ---- top bar ---- */
 QFrame#TopBar { background-color: @SURFACE@; border-bottom: 1px solid @BORDER@; }
@@ -84,12 +79,14 @@ QPushButton#PrimaryBtn {
     padding: 9px 16px; font-size: 13px; font-weight: 600;
 }
 QPushButton#PrimaryBtn:hover { background-color: @NAVY_HOVER@; }
+QPushButton#PrimaryBtn:pressed { background-color: #0E1C3B; }
 QPushButton#PrimaryBtn:disabled { background-color: #E5EAF1; color: #9AA7B8; }
 QPushButton#SecondaryBtn {
     background-color: @SURFACE@; color: @INK@; border: 1px solid #CBD5E1; border-radius: 8px;
     padding: 8px 14px; font-size: 12px; font-weight: 600;
 }
 QPushButton#SecondaryBtn:hover { background-color: #F1F5F9; }
+QPushButton#SecondaryBtn:pressed { background-color: #E6ECF4; }
 QPushButton#SecondaryBtn:disabled { background-color: #F4F7FB; color: #A5B1C2; border-color: #E1E7EF; }
 QPushButton#LinkBtn {
     background: transparent; border: none; color: #2563C9; font-weight: 600;
@@ -119,6 +116,7 @@ QTableWidget {
     selection-background-color: #DCE8FA; selection-color: @INK@;
 }
 QTableWidget::item { padding: 4px 8px; border: none; }
+QTableWidget::item:hover { background-color: #EEF4FD; }
 QHeaderView { background-color: #EEF2F7; }
 QHeaderView::section {
     background-color: #EEF2F7; color: @INK@; padding: 8px 8px; border: none;
@@ -140,6 +138,7 @@ QFrame#LandingArt {
 QLabel#LandingTitle { font-size: 34px; font-weight: 700; color: @NAVY@; }
 QLabel#LandingTagline { font-size: 15px; color: @MUTED@; }
 QFrame#DropZone { background-color: @SURFACE@; border: 2px dashed #B9C7DB; border-radius: 16px; }
+QFrame#DropZone:hover { border: 2px dashed #7FA6E8; }
 QFrame#DropZone[dragging="true"] { background-color: #F2F7FF; border: 2px dashed #2F6FE4; }
 QLabel#DropTitle { font-size: 17px; font-weight: 600; color: @INK@; }
 QLabel#DropHint { font-size: 12px; color: @FAINT@; }

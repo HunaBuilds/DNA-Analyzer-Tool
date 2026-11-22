@@ -31,3 +31,25 @@ def enum(owner, scope, name):
     if scoped is not None and hasattr(scoped, name):
         return getattr(scoped, name)
     return getattr(owner, name)
+
+
+def make_animation(parent, ms, start, end, on_value, easing="OutCubic"):
+    """A float animation from start to end that calls on_value(v) on every step."""
+    QVariantAnimation = get_qt("QVariantAnimation")
+    QEasingCurve = get_qt("QEasingCurve")
+    anim = QVariantAnimation(parent)
+    anim.setDuration(int(ms))
+    anim.setStartValue(float(start))
+    anim.setEndValue(float(end))
+    anim.setEasingCurve(QEasingCurve(enum(QEasingCurve, "Type", easing)))
+    anim.valueChanged.connect(on_value)
+    return anim
+
+
+def event_pos(event):
+    """(x, y) of a mouse event on both Qt5 and Qt6."""
+    if hasattr(event, "position"):
+        p = event.position()
+        return p.x(), p.y()
+    p = event.pos()
+    return float(p.x()), float(p.y())

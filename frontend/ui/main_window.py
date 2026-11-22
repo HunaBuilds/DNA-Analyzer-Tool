@@ -27,9 +27,9 @@ from frontend.ui.qt_compat import (
 from frontend.bridge.asm_bridge import AssemblyBridge, AssemblyWorker
 from frontend.ui.charts import BaseCompositionChart, GcLineChart, HelixWidget
 from frontend.ui.qt_compat import QColor, QBrush, QFont
-from frontend.ui.qt_extra import get_qt, enum
-from frontend.ui.theme import APP_STYLESHEET, BASE_TEXT, BASE_TINT, FONT_MONO
-from frontend.ui.widgets import ElidedLabel, SequenceView
+from frontend.ui.qt_extra import get_qt, enum, make_animation
+from frontend.ui.theme import APP_STYLESHEET, BASE_TEXT, BASE_TINT, BORDER
+from frontend.ui.widgets import ElidedLabel, NavButton, SequenceView
 from frontend.ui.pdf_report import write_analysis_pdf
 
 
@@ -39,6 +39,10 @@ QAbstractItemView = get_qt("QAbstractItemView")
 QShortcut = get_qt("QShortcut")
 QKeySequence = get_qt("QKeySequence")
 Qt = get_qt("Qt")
+QTimer = get_qt("QTimer")
+QPropertyAnimation = get_qt("QPropertyAnimation")
+QEasingCurve = get_qt("QEasingCurve")
+QGraphicsOpacityEffect = get_qt("QGraphicsOpacityEffect")
 FASTA_EXTENSIONS = (".fasta", ".fa", ".fna", ".txt")
 NUMERIC_TEXT = re.compile(r"^[\d,.\-+%]+$")
 
@@ -50,6 +54,9 @@ def format_seq_blocks(seq: str, line_width: int = 80) -> str:
 
 
 class MainWindow(QMainWindow):
+    SIDEBAR_OPEN = 248
+    SIDEBAR_RAIL = 64
+
     def __init__(self, project_root: str):
         super().__init__()
         self.bridge = AssemblyBridge(project_root)
@@ -69,6 +76,13 @@ class MainWindow(QMainWindow):
         self.similarity_result = None
         self.primer_result = None
         self.second_fasta_path = ""
+        self._sidebar_open = True
+        self._sidebar_anim = None
+        self._pill_anim = None
+        self._fade_anim = None
+        self._fade_widget = None
+        self._current_page = 0
+        self._count_anims = {}
 
         self.setWindowTitle("DNA Analyzer")
         self.resize(1280, 800)
@@ -121,6 +135,7 @@ class MainWindow(QMainWindow):
         label.setProperty("class", "HelpText")
         row.addWidget(dot)
         row.addWidget(label, 1)
+        box.text_label = label
         return box
 
     def _build_ui(self):
@@ -137,6 +152,8 @@ class MainWindow(QMainWindow):
         outer.addWidget(self.root_stack)
 
         QShortcut(QKeySequence("Ctrl+B"), self, activated=self._toggle_sidebar)
+        for button in self.findChildren(QPushButton):
+            button.setCursor(enum(Qt, "CursorShape", "PointingHandCursor"))
 
     # ------------------------------------------------------------ landing page
     def _find_sample_fasta(self) -> str:
@@ -160,7 +177,16 @@ class MainWindow(QMainWindow):
         art.setMinimumWidth(260)
         art_layout = QVBoxLayout(art)
         art_layout.setContentsMargins(0, 0, 0, 0)
-        art_layout.addWidget(HelixWidget(vertical=True, animated=True, pitch=190, rungs_per_turn=9, max_amplitude=95))
+        self.landing_helix = HelixWidget(
+            vertical=True, animated=True, pitch=190, rungs_per_turn=9, max_amplitude=95,
+            particles=True, interactive=True,
+        )
+        art_layout.addWidget(self.landing_helix, 1)
+        spin_hint = QLabel("Drag the helix to spin it")
+        spin_hint.setProperty("class", "HelpText")
+        spin_hint.setAlignment(align_center())
+        spin_hint.setContentsMargins(0, 0, 0, 14)
+        art_layout.addWidget(spin_hint)
         row.addWidget(art, 4)
 
         right = QWidget()
@@ -245,16 +271,20 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(224)
+        sidebar.setFixedWidth(self.SIDEBAR_OPEN)
         lay = QVBoxLayout(sidebar)
-        lay.setContentsMargins(14, 18, 14, 16)
+        lay.setContentsMargins(12, 16, 12, 14)
         lay.setSpacing(2)
 
-        brand_row = QHBoxLayout()
-        brand_row.setSpacing(10)
-        mark = HelixWidget(vertical=False, animated=False, pitch=22, rungs_per_turn=3, weight=0.55, max_amplitude=10)
-        mark.setFixedSize(44, 30)
-        text_col = QVBoxLayout()
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        self.brand_mark = HelixWidget(
+            vertical=False, animated=True, pitch=22, rungs_per_turn=3, weight=0.55, max_amplitude=10
+        )
+        self.brand_mark.setFixedSize(38, 30)
+        self.brand_text = QWidget()
+        text_col = QVBoxLayout(self.brand_text)
+        text_col.setContentsMargins(0, 0, 0, 0)
         text_col.setSpacing(0)
         brand = QLabel("DNA Analyzer")
         brand.setObjectName("BrandTitle")
@@ -262,9 +292,14 @@ class MainWindow(QMainWindow):
         sub.setObjectName("BrandSub")
         text_col.addWidget(brand)
         text_col.addWidget(sub)
-        brand_row.addWidget(mark)
-        brand_row.addLayout(text_col, 1)
-        lay.addLayout(brand_row)
+        self.btn_toggle_sidebar = NavButton("panel", "")
+        self.btn_toggle_sidebar.setFixedWidth(40)
+        self.btn_toggle_sidebar.setToolTip("Collapse menu (Ctrl+B)")
+        self.btn_toggle_sidebar.clicked.connect(self._toggle_sidebar)
+        head.addWidget(self.brand_mark)
+        head.addWidget(self.brand_text, 1)
+        head.addWidget(self.btn_toggle_sidebar)
+        lay.addLayout(head)
         lay.addSpacing(6)
 
         names = {
@@ -272,27 +307,51 @@ class MainWindow(QMainWindow):
             4: "DNA to RNA", 5: "Codon translation", 6: "Pattern search", 7: "Sequence similarity",
             8: "Primer Tm", 9: "PDF report",
         }
+        icons = {
+            0: "overview", 1: "gc", 2: "compress", 3: "revcomp", 4: "rna",
+            5: "codon", 6: "pattern", 7: "similarity", 8: "primer", 9: "pdf",
+        }
         groups = [
             ("Analyze", [0, 1, 5, 6, 8]),
             ("Transform", [3, 4, 2]),
             ("Compare and export", [7, 9]),
         ]
         self.nav_buttons = [None] * len(names)
-        for group_title, page_ids in groups:
+        self._nav_labels = []
+        self._nav_dividers = []
+        for g_idx, (group_title, page_ids) in enumerate(groups):
+            if g_idx > 0:
+                holder = QWidget()
+                holder.setFixedHeight(13)
+                hl = QVBoxLayout(holder)
+                hl.setContentsMargins(4, 6, 4, 6)
+                line = QFrame()
+                line.setFixedHeight(1)
+                line.setStyleSheet(f"background-color: {BORDER}; border: none;")
+                hl.addWidget(line)
+                holder.setVisible(False)
+                lay.addWidget(holder)
+                self._nav_dividers.append(holder)
             section = QLabel(group_title)
             section.setObjectName("NavSection")
             lay.addWidget(section)
+            self._nav_labels.append(section)
             for page_id in page_ids:
-                btn = QPushButton(names[page_id])
-                btn.setProperty("class", "NavBtn")
-                btn.setProperty("active", "true" if page_id == 0 else "false")
-                btn.setCursor(enum(Qt, "CursorShape", "PointingHandCursor"))
+                btn = NavButton(icons[page_id], names[page_id])
+                btn.set_active(page_id == 0)
                 btn.clicked.connect(lambda checked=False, i=page_id: self._switch_page(i))
                 lay.addWidget(btn)
                 self.nav_buttons[page_id] = btn
 
         lay.addStretch(1)
-        lay.addWidget(self._make_engine_status())
+        self._sidebar_status = self._make_engine_status()
+        lay.addWidget(self._sidebar_status)
+
+        # the sliding highlight sits behind the nav buttons
+        self.nav_pill = QFrame(sidebar)
+        self.nav_pill.setObjectName("NavPill")
+        self.nav_pill.setGeometry(0, 0, 0, 0)
+        self.nav_pill.lower()
         return sidebar
 
     def _build_workspace(self) -> QWidget:
@@ -313,20 +372,17 @@ class MainWindow(QMainWindow):
         topbar.setObjectName("TopBar")
         topbar.setFixedHeight(60)
         tb_layout = QHBoxLayout(topbar)
-        tb_layout.setContentsMargins(16, 10, 20, 10)
+        tb_layout.setContentsMargins(24, 10, 20, 10)
         tb_layout.setSpacing(10)
-
-        self.btn_toggle_sidebar = QPushButton("\u2630")
-        self.btn_toggle_sidebar.setObjectName("IconBtn")
-        self.btn_toggle_sidebar.setFixedSize(36, 36)
-        self.btn_toggle_sidebar.setToolTip("Show or hide the menu (Ctrl+B)")
-        self.btn_toggle_sidebar.setCursor(enum(Qt, "CursorShape", "PointingHandCursor"))
-        self.btn_toggle_sidebar.clicked.connect(self._toggle_sidebar)
-        tb_layout.addWidget(self.btn_toggle_sidebar)
 
         self.lbl_page_title = ElidedLabel("Overview")
         self.lbl_page_title.setObjectName("PageHeading")
         tb_layout.addWidget(self.lbl_page_title, 1)
+
+        self.lbl_busy = QLabel("Running in the assembly engine...")
+        self.lbl_busy.setProperty("class", "HelpText")
+        self.lbl_busy.setVisible(False)
+        tb_layout.addWidget(self.lbl_busy)
 
         self.lbl_fasta_badge = ElidedLabel("No file loaded")
         self.lbl_fasta_badge.setObjectName("HeaderBadge")
@@ -358,16 +414,100 @@ class MainWindow(QMainWindow):
             self._build_primer_page,
             self._build_pdf_page,
         ):
-            self.pages.addWidget(self._scroll_page(builder()))
+            self.pages.addWidget(self._scroll_page(builder(), builder != self._build_stats_page))
 
         right_layout.addWidget(self.pages, 1)
         main_layout.addWidget(right_panel, 1)
         return workspace
 
+    def _set_sidebar_texts(self, visible: bool):
+        self.brand_mark.setVisible(visible)
+        self.brand_text.setVisible(visible)
+        for label in self._nav_labels:
+            label.setVisible(visible)
+        for divider in self._nav_dividers:
+            divider.setVisible(not visible)
+        self._sidebar_status.text_label.setVisible(visible)
+
     def _toggle_sidebar(self):
         if self.root_stack.currentIndex() != 1:
             return
-        self.sidebar.setVisible(not self.sidebar.isVisible())
+        self._sidebar_open = not self._sidebar_open
+        if self._sidebar_anim is not None:
+            self._sidebar_anim.stop()
+        opening = self._sidebar_open
+        end = self.SIDEBAR_OPEN if opening else self.SIDEBAR_RAIL
+        if not opening:
+            self._set_sidebar_texts(False)
+        self.btn_toggle_sidebar.setToolTip("Collapse menu (Ctrl+B)" if opening else "Expand menu (Ctrl+B)")
+        shown = {"texts": not opening}
+
+        def step(value):
+            self.sidebar.setFixedWidth(int(value))
+            if opening and not shown["texts"] and value >= self.SIDEBAR_OPEN - 30:
+                shown["texts"] = True
+                self._set_sidebar_texts(True)
+            self._place_pill(animate=False)
+
+        def done():
+            self.sidebar.setFixedWidth(end)
+            if opening:
+                self._set_sidebar_texts(True)
+            self._place_pill(animate=False)
+
+        self._sidebar_anim = make_animation(self, 240, self.sidebar.width(), end, step)
+        self._sidebar_anim.finished.connect(done)
+        self._sidebar_anim.start()
+
+    def _place_pill(self, animate: bool = True):
+        button = self.nav_buttons[self._current_page]
+        self.sidebar.layout().activate()
+        target = button.geometry()
+        pill = self.nav_pill
+        if self._pill_anim is not None:
+            self._pill_anim.stop()
+        if not animate or pill.width() == 0 or not self.sidebar.isVisible():
+            pill.setGeometry(target)
+            pill.show()
+            return
+        anim = QPropertyAnimation(pill, b"geometry", self)
+        anim.setDuration(220)
+        anim.setStartValue(pill.geometry())
+        anim.setEndValue(target)
+        anim.setEasingCurve(QEasingCurve(enum(QEasingCurve, "Type", "OutCubic")))
+        anim.start()
+        self._pill_anim = anim
+
+    def _fade_in(self, widget, ms: int):
+        if self._fade_anim is not None:
+            self._fade_anim.stop()
+            if self._fade_widget is not None:
+                self._fade_widget.setGraphicsEffect(None)
+        effect = QGraphicsOpacityEffect(widget)
+        effect.setOpacity(0.0)
+        widget.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(ms)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.finished.connect(lambda w=widget: w.setGraphicsEffect(None))
+        anim.start()
+        self._fade_anim = anim
+        self._fade_widget = widget
+
+    def _count_up(self, label, end_value, fmt: str):
+        try:
+            target = float(end_value)
+        except (TypeError, ValueError):
+            return
+        final_text = label.text()
+        previous = self._count_anims.get(label)
+        if previous is not None:
+            previous.stop()
+        anim = make_animation(self, 900, 0.0, target, lambda v: label.setText(fmt.format(v)))
+        anim.finished.connect(lambda: label.setText(final_text))
+        self._count_anims[label] = anim
+        anim.start()
 
     def _build_stats_page(self) -> QWidget:
         page = QWidget()
@@ -415,6 +555,7 @@ class MainWindow(QMainWindow):
         lbl_t.setProperty("class", "SectionTitle")
         self.stats_table = QTableWidget(5, 4)
         self.stats_table.setHorizontalHeaderLabels(["Base", "Name", "Count", "Canonical %"])
+        self.stats_table._no_autofit = True
         self._prepare_table(self.stats_table)
         self.stats_table.setMinimumHeight(0)
         self.stats_table.verticalHeader().setSectionResizeMode(stretch_resize())
@@ -438,8 +579,6 @@ class MainWindow(QMainWindow):
         hdr_row.addStretch(1)
         hdr_row.addWidget(self.btn_copy_clean)
         self.txt_clean_seq = SequenceView()
-        self.txt_clean_seq.setMinimumHeight(100)
-        self.txt_clean_seq.setMaximumHeight(140)
         s_layout.addLayout(hdr_row)
         s_layout.addWidget(self.txt_clean_seq)
         layout.addWidget(seq_card)
@@ -556,7 +695,6 @@ class MainWindow(QMainWindow):
         self.txt_hex_preview = SequenceView(highlight=False)
         self.txt_hex_preview.setProperty("class", "SeqBox")
         self.txt_hex_preview.setReadOnly(True)
-        self.txt_hex_preview.setMaximumHeight(140)
         h_layout.addWidget(lbl_h)
         h_layout.addWidget(self.txt_hex_preview)
         layout.addWidget(hex_card)
@@ -603,7 +741,6 @@ class MainWindow(QMainWindow):
         self.txt_rc_seq = SequenceView()
         self.txt_rc_seq.setProperty("class", "SeqBox")
         self.txt_rc_seq.setReadOnly(True)
-        self.txt_rc_seq.setMinimumHeight(260)
         c_layout.addWidget(self.lbl_rc_meta)
         c_layout.addWidget(self.txt_rc_seq)
         layout.addWidget(card)
@@ -649,15 +786,19 @@ class MainWindow(QMainWindow):
         self.txt_rna_seq = SequenceView()
         self.txt_rna_seq.setProperty("class", "SeqBox")
         self.txt_rna_seq.setReadOnly(True)
-        self.txt_rna_seq.setMinimumHeight(260)
         c_layout.addWidget(self.lbl_rna_meta)
         c_layout.addWidget(self.txt_rna_seq)
         layout.addWidget(card)
 
         return page
 
-    def _scroll_page(self, page: QWidget) -> QScrollArea:
+    def _scroll_page(self, page: QWidget, keep_natural_height: bool = True) -> QScrollArea:
         page.setObjectName("Page")
+        layout = page.layout()
+        if keep_natural_height and layout is not None and layout.count() > 0:
+            last = layout.itemAt(layout.count() - 1)
+            if last.spacerItem() is None:
+                layout.addStretch(1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(enum(Qt, "ScrollBarPolicy", "ScrollBarAlwaysOff"))
@@ -687,12 +828,30 @@ class MainWindow(QMainWindow):
         table.setAlternatingRowColors(True)
         table.setShowGrid(False)
         table.setWordWrap(False)
-        table.setMinimumHeight(240)
         table.setFrameShape(enum(QFrame, "Shape", "NoFrame"))
         table.setSelectionBehavior(enum(QAbstractItemView, "SelectionBehavior", "SelectRows"))
         scroll_mode = enum(QAbstractItemView, "ScrollMode", "ScrollPerPixel")
         table.setVerticalScrollMode(scroll_mode)
         table.setHorizontalScrollMode(scroll_mode)
+        model = table.model()
+        for signal in (model.rowsInserted, model.rowsRemoved, model.modelReset):
+            signal.connect(lambda *args, t=table: self._fit_table(t))
+        self._fit_table(table)
+
+    TABLE_MAX_HEIGHT = 420
+
+    def _fit_table(self, table: QTableWidget):
+        """Size a result table to its rows; past the maximum it scrolls inside itself."""
+        try:
+            if getattr(table, "_no_autofit", False):
+                return
+            rows = table.rowCount()
+        except RuntimeError:  # the table is already being torn down
+            return
+        header_h = max(34, table.horizontalHeader().sizeHint().height())
+        body_h = rows * table.verticalHeader().defaultSectionSize() if rows else 64
+        wanted = header_h + body_h + 4 + 14  # frame and horizontal scrollbar
+        table.setFixedHeight(max(100, min(self.TABLE_MAX_HEIGHT, int(wanted))))
 
     def _base_item(self, letter: str) -> QTableWidgetItem:
         item = QTableWidgetItem(letter)
@@ -760,7 +919,6 @@ class MainWindow(QMainWindow):
         self.txt_codon_rna = SequenceView()
         self.txt_codon_rna.setProperty("class", "SeqBox")
         self.txt_codon_rna.setReadOnly(True)
-        self.txt_codon_rna.setMaximumHeight(120)
         c_layout.addWidget(self.lbl_codon_rna)
         c_layout.addWidget(self.txt_codon_rna)
         layout.addWidget(card)
@@ -952,13 +1110,18 @@ class MainWindow(QMainWindow):
             "Primer Tm",
             "PDF report",
         ]
+        first_show = self.root_stack.currentIndex() != 1
         self.root_stack.setCurrentIndex(1)
         self.pages.setCurrentIndex(index)
+        self._current_page = index
         self.lbl_page_title.setText(titles[index])
         for idx, btn in enumerate(self.nav_buttons):
-            btn.setProperty("active", "true" if idx == index else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+            btn.set_active(idx == index)
+        QTimer.singleShot(0, lambda: self._place_pill(animate=not first_show))
+        if first_show:
+            self._fade_in(self.root_stack.currentWidget(), 450)
+        else:
+            self._fade_in(self.pages.currentWidget(), 170)
         if index == 5 and self.clean_sequence and self.codon_result is None:
             self._on_run_codon()
         if index == 9:
@@ -991,6 +1154,10 @@ class MainWindow(QMainWindow):
         self.btn_upload.setEnabled(not busy)
         self.btn_upload_landing.setEnabled(not busy)
         self.btn_sample.setEnabled(not busy)
+        speed = 4.5 if busy else 1.0
+        self.landing_helix.set_speed(speed)
+        self.brand_mark.set_speed(speed)
+        self.lbl_busy.setVisible(busy)
 
     def _launch_task(self, task_name: str, fn, *args):
         if self.active_worker is not None and self.active_worker.isRunning():
@@ -1021,6 +1188,7 @@ class MainWindow(QMainWindow):
 
     def _set_drop_highlight(self, on: bool):
         self.drop_zone.setProperty("dragging", "true" if on else "false")
+        self.landing_helix.set_speed(3.2 if on else 1.0)
         self.drop_zone.style().unpolish(self.drop_zone)
         self.drop_zone.style().polish(self.drop_zone)
 
@@ -1172,6 +1340,10 @@ class MainWindow(QMainWindow):
         self.kpi_gc_val.setText(f"{res.get('GC_PERCENT', '0.00')}%")
         self.kpi_at_val.setText(f"{res.get('AT_PERCENT', '0.00')}%")
         self.kpi_n_val.setText(f"{cn:,}")
+        self._count_up(self.kpi_len_val, seq_len, "{:,.0f} bp")
+        self._count_up(self.kpi_gc_val, res.get("GC_PERCENT", "0"), "{:.2f}%")
+        self._count_up(self.kpi_at_val, res.get("AT_PERCENT", "0"), "{:.2f}%")
+        self._count_up(self.kpi_n_val, cn, "{:,.0f}")
 
         self.base_chart.set_counts({"A": ca, "T": ct, "G": cg, "C": cc, "N": cn})
 
