@@ -213,7 +213,7 @@ class BaseCompositionChart(QWidget):
 
             painter.setPen(no_pen())
             painter.setBrush(QBrush(QColor(BASE_FILL[base])))
-            painter.drawRoundedRect(QRectF(lx, y + 5, 10, 10), 3, 3)
+            painter.drawEllipse(QRectF(lx, y + 4, 12, 12))
             painter.setPen(QColor(INK))
             painter.setFont(make_font(9.5, True))
             painter.drawText(QRectF(lx + 18, y, lw - 18, 20), align_left(), BASE_NAMES[base])
@@ -398,15 +398,30 @@ class GcLineChart(QWidget):
 
 
 class HelixWidget(QWidget):
-    """Double helix with A-T / G-C rungs. Optional: spin speed, drifting bases, mouse scrubbing."""
+    """Double helix with A-T / G-C rungs.
+
+    Options: spin speed, drifting bases or glowing dots, mouse scrubbing, a dark/glowing
+    palette for navy backgrounds, rotation, overall opacity and fading ends.
+    """
 
     _PAIRS = ["AT", "GC", "TA", "CG", "AT", "GC", "GC", "TA", "CG", "AT", "TA", "GC", "CG", "AT", "TA", "CG"]
-    _STRAND_FRONT = ("#14274E", "#5B7DB1")
-    _STRAND_BACK = ((20, 39, 78, 110), (91, 125, 177, 110))
+    _PALETTES = {
+        "light": {
+            "front": ("#14274E", "#5B7DB1"),
+            "back": ((20, 39, 78, 110), (91, 125, 177, 110)),
+            "glow": None,
+        },
+        "dark": {
+            "front": ("#CFEFFF", "#5DB2FF"),
+            "back": ((140, 205, 255, 120), (80, 140, 235, 120)),
+            "glow": (110, 200, 255),
+        },
+    }
 
     def __init__(self, parent=None, vertical=True, animated=False, pitch=170.0,
                  rungs_per_turn=9, weight=1.0, max_amplitude=110.0,
-                 particles=False, interactive=False):
+                 particles=False, interactive=False, palette="light", glow=False,
+                 angle=0.0, opacity=1.0, fade_ends=False, particle_mode="letters"):
         super().__init__(parent)
         self._vertical = vertical
         self._animated = animated
@@ -414,6 +429,12 @@ class HelixWidget(QWidget):
         self._rungs_per_turn = int(rungs_per_turn)
         self._weight = float(weight)
         self._max_amp = float(max_amplitude)
+        self._palette = self._PALETTES.get(palette, self._PALETTES["light"])
+        self._glow = bool(glow)
+        self._angle = float(angle)
+        self._opacity = float(opacity)
+        self._fade = bool(fade_ends)
+        self._particle_mode = particle_mode
         self._phase = 0.0
         self._pulse = 0.0
         self._base_speed = 1.0
@@ -491,18 +512,37 @@ class HelixWidget(QWidget):
             self.setCursor(enum(Qt, "CursorShape", "OpenHandCursor"))
 
     # ---- painting
+    @staticmethod
+    def _with_alpha(colour, factor):
+        c = QColor(colour)
+        c.setAlphaF(max(0.0, min(1.0, c.alphaF() * factor)))
+        return c
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(antialias_hint())
+        painter.setOpacity(self._opacity)
 
         w, h = self.width(), self.height()
 
         for p in self._particles:
-            colour = QColor(BASE_FILL[p["b"]])
-            colour.setAlpha(p["a"])
-            painter.setPen(colour)
-            painter.setFont(make_font(p["s"], True))
-            painter.drawText(QRectF(p["x"] * w - 12, p["y"] * h - 12, 24, 24), align_center(), p["b"])
+            if self._particle_mode == "dots":
+                colour = QColor(150, 215, 255, p["a"])
+                painter.setPen(no_pen())
+                painter.setBrush(QBrush(colour))
+                r = p["s"] / 5.0
+                painter.drawEllipse(QPointF(p["x"] * w, p["y"] * h), r, r)
+            else:
+                colour = QColor(BASE_FILL[p["b"]])
+                colour.setAlpha(p["a"])
+                painter.setPen(colour)
+                painter.setFont(make_font(p["s"], True))
+                painter.drawText(QRectF(p["x"] * w - 12, p["y"] * h - 12, 24, 24), align_center(), p["b"])
+
+        if self._angle:
+            painter.translate(w / 2.0, h / 2.0)
+            painter.rotate(self._angle)
+            painter.translate(-w / 2.0, -h / 2.0)
 
         length, span = (h, w) if self._vertical else (w, h)
         margin = 10 if self._weight < 0.8 else 18
@@ -511,6 +551,9 @@ class HelixWidget(QWidget):
         wt = self._weight
         round_cap = enum(Qt, "PenCapStyle", "RoundCap")
         flat_cap = enum(Qt, "PenCapStyle", "FlatCap")
+        front_cols = self._palette["front"]
+        back_cols = self._palette["back"]
+        glow_rgb = self._palette["glow"] if self._glow else None
 
         def pt(s, c):
             return QPointF(c, s) if self._vertical else QPointF(s, c)
@@ -518,21 +561,28 @@ class HelixWidget(QWidget):
         def phase_at(s):
             return self._phase + (s / self._pitch) * 2 * math.pi
 
+        def fade(s):
+            if not self._fade:
+                return 1.0
+            edge = 70.0
+            return max(0.0, min(1.0, s / edge, (length - s) / edge))
+
         back, front = [], []
         step = 4.0
         s = margin
         while s < length - margin:
             s2 = min(s + step, length - margin)
             mid = phase_at((s + s2) / 2.0)
+            f = fade((s + s2) / 2.0)
             for strand, sign in ((0, 1.0), (1, -1.0)):
                 a = pt(s, centre + sign * amp * math.sin(phase_at(s)))
                 b = pt(s2, centre + sign * amp * math.sin(phase_at(s2)))
                 is_front = (math.cos(mid) > 0) if strand == 0 else (math.cos(mid) < 0)
-                (front if is_front else back).append((a, b, strand))
+                (front if is_front else back).append((a, b, strand, f))
             s = s2
 
-        for a, b, strand in back:
-            pen = QPen(QColor(*self._STRAND_BACK[strand]), 2.4 * wt)
+        for a, b, strand, f in back:
+            pen = QPen(self._with_alpha(QColor(*back_cols[strand]), f), 2.4 * wt)
             pen.setCapStyle(flat_cap)
             painter.setPen(pen)
             painter.drawLine(a, b)
@@ -554,16 +604,24 @@ class HelixWidget(QWidget):
                     dist = abs(s - pulse_at)
                     if dist < 46:
                         glow = 1.0 + 0.9 * (1.0 - dist / 46.0)
+                f = fade(s)
                 for start, end, base in ((p1, mid_pt, b1), (mid_pt, p2, b2)):
-                    pen = QPen(QColor(BASE_FILL[base]), 4.2 * wt * glow)
+                    pen = QPen(self._with_alpha(QColor(BASE_FILL[base]), f), 4.2 * wt * glow)
                     pen.setCapStyle(round_cap)
                     painter.setPen(pen)
                     painter.drawLine(start, end)
             s += spacing
             i += 1
 
-        for a, b, strand in front:
-            pen = QPen(QColor(self._STRAND_FRONT[strand]), 3.8 * wt)
+        if glow_rgb is not None:
+            for a, b, strand, f in front:
+                pen = QPen(QColor(glow_rgb[0], glow_rgb[1], glow_rgb[2], int(46 * f)), 11 * wt)
+                pen.setCapStyle(round_cap)
+                painter.setPen(pen)
+                painter.drawLine(a, b)
+
+        for a, b, strand, f in front:
+            pen = QPen(self._with_alpha(QColor(front_cols[strand]), f), 3.8 * wt)
             pen.setCapStyle(round_cap)
             painter.setPen(pen)
             painter.drawLine(a, b)

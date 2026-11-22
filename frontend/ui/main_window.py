@@ -17,6 +17,7 @@ from frontend.ui.qt_compat import (
     QSpinBox,
     QLineEdit,
     QPlainTextEdit,
+    QCheckBox,
     QScrollArea,
     QGuiApplication,
     align_left,
@@ -29,7 +30,10 @@ from frontend.ui.charts import BaseCompositionChart, GcLineChart, HelixWidget
 from frontend.ui.qt_compat import QColor, QBrush, QFont
 from frontend.ui.qt_extra import get_qt, enum, make_animation
 from frontend.ui.theme import APP_STYLESHEET, BASE_TEXT, BASE_TINT, BORDER
-from frontend.ui.widgets import ElidedLabel, NavButton, SequenceView
+from frontend.ui.widgets import (
+    AppBackground, CardFrame, ElidedLabel, NavButton, SequenceView, SidebarFrame,
+    PillFrame, badge_pixmap, icon_for, icon_label,
+)
 from frontend.ui.pdf_report import write_analysis_pdf
 
 
@@ -43,6 +47,7 @@ QTimer = get_qt("QTimer")
 QPropertyAnimation = get_qt("QPropertyAnimation")
 QEasingCurve = get_qt("QEasingCurve")
 QGraphicsOpacityEffect = get_qt("QGraphicsOpacityEffect")
+QSize = get_qt("QSize")
 FASTA_EXTENSIONS = (".fasta", ".fa", ".fna", ".txt")
 NUMERIC_TEXT = re.compile(r"^[\d,.\-+%]+$")
 
@@ -93,22 +98,29 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._update_controls_enabled(False)
 
-    def _make_kpi_card(self, title: str, default_val: str, sub_text: str, accent: str = "#14274E"):
-        card = QFrame()
-        card.setProperty("class", "Card")
+    KPI_STYLE = {
+        "blue": ("bars", "#2F6FE4", "#D3E4FF", "wave"),
+        "teal": ("drop", "#0E8FA0", "#CBEEF3", "helix"),
+        "green": ("leaf", "#1E9E66", "#CDEFDC", "leaf"),
+        "purple": ("star", "#6D4CD6", "#E0D6FA", "question"),
+    }
+
+    def _make_kpi_card(self, title: str, default_val: str, sub_text: str, tone: str = "blue", icon: str = ""):
+        if tone not in self.KPI_STYLE:
+            tone = "blue"
+        default_icon, fg, bg, deco = self.KPI_STYLE[tone]
+        card = CardFrame(tone, deco)
         card.setMinimumWidth(0)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setContentsMargins(14, 12, 14, 10)
         layout.setSpacing(2)
 
         head = QHBoxLayout()
-        head.setSpacing(8)
-        dot = QFrame()
-        dot.setFixedSize(8, 8)
-        dot.setStyleSheet(f"background-color: {accent}; border: none; border-radius: 4px;")
+        head.setSpacing(10)
+        badge = icon_label(icon or default_icon, fg, bg, 38, 1.0)
         lbl_title = ElidedLabel(title)
         lbl_title.setProperty("class", "KpiTitle")
-        head.addWidget(dot)
+        head.addWidget(badge)
         head.addWidget(lbl_title, 1)
 
         lbl_val = QLabel(default_val)
@@ -121,18 +133,28 @@ class MainWindow(QMainWindow):
         layout.addWidget(lbl_sub)
         return card, lbl_val, lbl_sub
 
-    def _make_engine_status(self) -> QWidget:
+    def _title_row(self, text: str, icon_key: str, colour: str = "#0B2A5B") -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addWidget(icon_label(icon_key, colour, None, 24, 1.0))
+        label = QLabel(text)
+        label.setProperty("class", "SectionTitle")
+        row.addWidget(label)
+        row.addStretch(1)
+        return row
+
+    def _make_engine_status(self, dark: bool = False) -> QWidget:
         ready = self.bridge.exe_exists()
-        box = QWidget()
+        box = PillFrame("#1B3A72") if dark else PillFrame("#FFFFFF", "#D3E2F6")
         row = QHBoxLayout(box)
-        row.setContentsMargins(0, 0, 0, 0)
+        row.setContentsMargins(12, 7, 14, 7)
         row.setSpacing(8)
         dot = QFrame()
-        dot.setFixedSize(8, 8)
-        colour = "#2FA66A" if ready else "#F5A524"
-        dot.setStyleSheet(f"background-color: {colour}; border: none; border-radius: 4px;")
+        dot.setFixedSize(10, 10)
+        colour = "#22C58B" if ready else "#F5A524"
+        dot.setStyleSheet(f"background-color: {colour}; border: none; border-radius: 5px;")
         label = ElidedLabel("Assembly engine ready" if ready else "Engine not built (run backend/build.bat)")
-        label.setProperty("class", "HelpText")
+        label.setStyleSheet(f"color: {'#E4EEFF' if dark else '#4B5F82'}; font-size: 12px; font-weight: 600;")
         row.addWidget(dot)
         row.addWidget(label, 1)
         box.text_label = label
@@ -179,17 +201,17 @@ class MainWindow(QMainWindow):
         art_layout.setContentsMargins(0, 0, 0, 0)
         self.landing_helix = HelixWidget(
             vertical=True, animated=True, pitch=190, rungs_per_turn=9, max_amplitude=95,
-            particles=True, interactive=True,
+            particles=True, interactive=True, palette="dark", glow=True, particle_mode="dots",
         )
         art_layout.addWidget(self.landing_helix, 1)
         spin_hint = QLabel("Drag the helix to spin it")
-        spin_hint.setProperty("class", "HelpText")
+        spin_hint.setObjectName("LandingArtHint")
         spin_hint.setAlignment(align_center())
-        spin_hint.setContentsMargins(0, 0, 0, 14)
+        spin_hint.setContentsMargins(0, 0, 0, 16)
         art_layout.addWidget(spin_hint)
         row.addWidget(art, 4)
 
-        right = QWidget()
+        right = AppBackground()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(48, 36, 48, 28)
         right_layout.addStretch(1)
@@ -212,8 +234,11 @@ class MainWindow(QMainWindow):
         self.drop_zone = QFrame()
         self.drop_zone.setObjectName("DropZone")
         dz = QVBoxLayout(self.drop_zone)
-        dz.setContentsMargins(28, 32, 28, 28)
+        dz.setContentsMargins(28, 30, 28, 26)
         dz.setSpacing(8)
+        dz_icon = QLabel()
+        dz_icon.setPixmap(badge_pixmap("download", "#2F6FE4", "#DCEAFF", 52, 1.3))
+        dz_icon.setAlignment(align_center())
         dz_title = QLabel("Drop a FASTA file here")
         dz_title.setObjectName("DropTitle")
         dz_title.setAlignment(align_center())
@@ -222,11 +247,11 @@ class MainWindow(QMainWindow):
         dz_or.setAlignment(align_center())
         self.btn_upload_landing = QPushButton("Choose FASTA file")
         self.btn_upload_landing.setObjectName("PrimaryBtn")
-        self.btn_upload_landing.setCursor(enum(Qt, "CursorShape", "PointingHandCursor"))
         self.btn_upload_landing.clicked.connect(self._on_upload_fasta)
         dz_hint = QLabel(".fasta   .fa   .fna   .txt")
         dz_hint.setObjectName("DropHint")
         dz_hint.setAlignment(align_center())
+        dz.addWidget(dz_icon)
         dz.addWidget(dz_title)
         dz.addWidget(dz_or)
         dz.addWidget(self.btn_upload_landing, 0, align_center())
@@ -242,7 +267,6 @@ class MainWindow(QMainWindow):
         sample = self._find_sample_fasta()
         self.btn_sample = QPushButton("No file handy? Try the sample sequence")
         self.btn_sample.setObjectName("LinkBtn")
-        self.btn_sample.setCursor(enum(Qt, "CursorShape", "PointingHandCursor"))
         self.btn_sample.clicked.connect(lambda: self._load_fasta(sample))
         self.btn_sample.setVisible(bool(sample))
         c_layout.addWidget(self.btn_sample)
@@ -263,25 +287,34 @@ class MainWindow(QMainWindow):
         centre_row.addStretch(1)
         right_layout.addLayout(centre_row)
         right_layout.addStretch(1)
-        right_layout.addWidget(self._make_engine_status())
+        right_layout.addWidget(self._make_engine_status(), 0, align_left())
         row.addWidget(right, 6)
         return page
 
-    # ------------------------------------------------------------ workspace
     def _build_sidebar(self) -> QFrame:
-        sidebar = QFrame()
+        sidebar = SidebarFrame()
         sidebar.setObjectName("Sidebar")
         sidebar.setFixedWidth(self.SIDEBAR_OPEN)
+
+        # large glowing helix behind the lower part of the menu (kept behind the buttons)
+        self.sidebar_helix = HelixWidget(
+            sidebar, vertical=True, animated=True, pitch=130, rungs_per_turn=8, max_amplitude=72,
+            palette="dark", glow=True, angle=24, fade_ends=True, particles=True, particle_mode="dots", weight=0.6,
+            opacity=0.75,
+        )
+        sidebar.attach_helix(self.sidebar_helix)
+
         lay = QVBoxLayout(sidebar)
-        lay.setContentsMargins(12, 16, 12, 14)
-        lay.setSpacing(2)
+        lay.setContentsMargins(12, 18, 12, 16)
+        lay.setSpacing(3)
 
         head = QHBoxLayout()
         head.setSpacing(8)
         self.brand_mark = HelixWidget(
-            vertical=False, animated=True, pitch=22, rungs_per_turn=3, weight=0.55, max_amplitude=10
+            vertical=True, animated=True, pitch=44, rungs_per_turn=5, weight=0.6, max_amplitude=11,
+            palette="dark", glow=True, angle=18,
         )
-        self.brand_mark.setFixedSize(38, 30)
+        self.brand_mark.setFixedSize(40, 46)
         self.brand_text = QWidget()
         text_col = QVBoxLayout(self.brand_text)
         text_col.setContentsMargins(0, 0, 0, 0)
@@ -307,7 +340,7 @@ class MainWindow(QMainWindow):
             4: "DNA to RNA", 5: "Codon translation", 6: "Pattern search", 7: "Sequence similarity",
             8: "Primer Tm", 9: "PDF report",
         }
-        icons = {
+        self._nav_icon_keys = {
             0: "overview", 1: "gc", 2: "compress", 3: "revcomp", 4: "rna",
             5: "codon", 6: "pattern", 7: "similarity", 8: "primer", 9: "pdf",
         }
@@ -327,7 +360,7 @@ class MainWindow(QMainWindow):
                 hl.setContentsMargins(4, 6, 4, 6)
                 line = QFrame()
                 line.setFixedHeight(1)
-                line.setStyleSheet(f"background-color: {BORDER}; border: none;")
+                line.setStyleSheet("background-color: #2F5594; border: none;")
                 hl.addWidget(line)
                 holder.setVisible(False)
                 lay.addWidget(holder)
@@ -337,21 +370,22 @@ class MainWindow(QMainWindow):
             lay.addWidget(section)
             self._nav_labels.append(section)
             for page_id in page_ids:
-                btn = NavButton(icons[page_id], names[page_id])
+                btn = NavButton(self._nav_icon_keys[page_id], names[page_id])
                 btn.set_active(page_id == 0)
                 btn.clicked.connect(lambda checked=False, i=page_id: self._switch_page(i))
                 lay.addWidget(btn)
                 self.nav_buttons[page_id] = btn
 
         lay.addStretch(1)
-        self._sidebar_status = self._make_engine_status()
+        self._sidebar_status = self._make_engine_status(dark=True)
         lay.addWidget(self._sidebar_status)
 
-        # the sliding highlight sits behind the nav buttons
+        # sliding highlight: above the helix, below the buttons
         self.nav_pill = QFrame(sidebar)
         self.nav_pill.setObjectName("NavPill")
         self.nav_pill.setGeometry(0, 0, 0, 0)
         self.nav_pill.lower()
+        self.sidebar_helix.lower()
         return sidebar
 
     def _build_workspace(self) -> QWidget:
@@ -363,18 +397,22 @@ class MainWindow(QMainWindow):
         self.sidebar = self._build_sidebar()
         main_layout.addWidget(self.sidebar)
 
-        right_panel = QWidget()
+        right_panel = AppBackground()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
         topbar = QFrame()
         topbar.setObjectName("TopBar")
-        topbar.setFixedHeight(60)
+        topbar.setFixedHeight(74)
         tb_layout = QHBoxLayout(topbar)
-        tb_layout.setContentsMargins(24, 10, 20, 10)
-        tb_layout.setSpacing(10)
+        tb_layout.setContentsMargins(26, 14, 24, 8)
+        tb_layout.setSpacing(12)
 
+        self.lbl_page_icon = QLabel()
+        self.lbl_page_icon.setFixedSize(34, 34)
+        self.lbl_page_icon.setPixmap(badge_pixmap("bars", "#2F6FE4", None, 34, 1.5))
+        tb_layout.addWidget(self.lbl_page_icon)
         self.lbl_page_title = ElidedLabel("Overview")
         self.lbl_page_title.setObjectName("PageHeading")
         tb_layout.addWidget(self.lbl_page_title, 1)
@@ -386,16 +424,20 @@ class MainWindow(QMainWindow):
 
         self.lbl_fasta_badge = ElidedLabel("No file loaded")
         self.lbl_fasta_badge.setObjectName("HeaderBadge")
-        self.lbl_fasta_badge.setMaximumWidth(360)
+        self.lbl_fasta_badge.setMaximumWidth(380)
         tb_layout.addWidget(self.lbl_fasta_badge)
 
-        self.btn_upload = QPushButton("Open file")
+        self.btn_upload = QPushButton(" Open file")
         self.btn_upload.setObjectName("SecondaryBtn")
+        self.btn_upload.setIcon(icon_for("folder", "#0B2A5B", 18))
+        self.btn_upload.setIconSize(QSize(18, 18))
         self.btn_upload.clicked.connect(self._on_upload_fasta)
         tb_layout.addWidget(self.btn_upload)
 
-        self.btn_pdf = QPushButton("Export PDF report")
+        self.btn_pdf = QPushButton(" Export PDF report")
         self.btn_pdf.setObjectName("PrimaryBtn")
+        self.btn_pdf.setIcon(icon_for("download", "#FFFFFF", 18))
+        self.btn_pdf.setIconSize(QSize(18, 18))
         self.btn_pdf.clicked.connect(self._on_generate_pdf)
         tb_layout.addWidget(self.btn_pdf)
 
@@ -423,6 +465,7 @@ class MainWindow(QMainWindow):
     def _set_sidebar_texts(self, visible: bool):
         self.brand_mark.setVisible(visible)
         self.brand_text.setVisible(visible)
+        self.sidebar_helix.setVisible(visible)
         for label in self._nav_labels:
             label.setVisible(visible)
         for divider in self._nav_dividers:
@@ -512,16 +555,16 @@ class MainWindow(QMainWindow):
     def _build_stats_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 24)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 6, 20, 16)
+        layout.setSpacing(4)
 
         kpi_grid = QGridLayout()
-        kpi_grid.setSpacing(14)
+        kpi_grid.setSpacing(4)
         cards = [
-            self._make_kpi_card("Sequence length", "0 bp", "Open a FASTA file to begin", "#14274E"),
-            self._make_kpi_card("GC content", "0.00%", "G + C of canonical bases", "#3B82F6"),
-            self._make_kpi_card("AT content", "0.00%", "A + T of canonical bases", "#2FA66A"),
-            self._make_kpi_card("Ambiguous bases (N)", "0", "Left out of GC%", "#94A3B8"),
+            self._make_kpi_card("Sequence length", "0 bp", "Open a FASTA file to begin", "blue"),
+            self._make_kpi_card("GC content", "0.00%", "G + C of canonical bases", "teal"),
+            self._make_kpi_card("AT content", "0.00%", "A + T of canonical bases", "green"),
+            self._make_kpi_card("Ambiguous bases (N)", "0", "Left out of GC%", "purple"),
         ]
         (c1, self.kpi_len_val, self.kpi_len_sub) = cards[0]
         (c2, self.kpi_gc_val, self.kpi_gc_sub) = cards[1]
@@ -533,50 +576,42 @@ class MainWindow(QMainWindow):
         layout.addLayout(kpi_grid)
 
         mid_row = QHBoxLayout()
-        mid_row.setSpacing(16)
+        mid_row.setSpacing(4)
 
-        chart_card = QFrame()
-        chart_card.setProperty("class", "Card")
+        chart_card = CardFrame("white")
         chart_layout = QVBoxLayout(chart_card)
         chart_layout.setContentsMargins(18, 14, 18, 14)
-        lbl_c = QLabel("Base composition")
-        lbl_c.setProperty("class", "SectionTitle")
+        chart_layout.addLayout(self._title_row("Base composition", "pie"))
         self.base_chart = BaseCompositionChart()
-        chart_layout.addWidget(lbl_c)
         chart_layout.addWidget(self.base_chart, 1)
         mid_row.addWidget(chart_card, 3)
 
-        table_card = QFrame()
-        table_card.setProperty("class", "Card")
-        table_card.setMinimumWidth(380)
+        table_card = CardFrame("white")
+        table_card.setMinimumWidth(440)
         t_layout = QVBoxLayout(table_card)
         t_layout.setContentsMargins(18, 14, 18, 14)
-        lbl_t = QLabel("Counts and percentages")
-        lbl_t.setProperty("class", "SectionTitle")
+        t_layout.addLayout(self._title_row("Counts and percentages", "bars"))
+        t_layout.addSpacing(4)
         self.stats_table = QTableWidget(5, 4)
         self.stats_table.setHorizontalHeaderLabels(["Base", "Name", "Count", "Canonical %"])
         self.stats_table._no_autofit = True
         self._prepare_table(self.stats_table)
         self.stats_table.setMinimumHeight(0)
         self.stats_table.verticalHeader().setSectionResizeMode(stretch_resize())
-        t_layout.addWidget(lbl_t)
         t_layout.addWidget(self.stats_table, 1)
         mid_row.addWidget(table_card, 2)
 
         layout.addLayout(mid_row, 1)
 
-        seq_card = QFrame()
-        seq_card.setProperty("class", "Card")
+        seq_card = CardFrame("white")
         s_layout = QVBoxLayout(seq_card)
         s_layout.setContentsMargins(18, 12, 18, 16)
-        hdr_row = QHBoxLayout()
-        lbl_s = QLabel("Cleaned sequence (5' to 3')")
-        lbl_s.setProperty("class", "SectionTitle")
-        self.btn_copy_clean = QPushButton("Copy sequence")
+        hdr_row = self._title_row("Cleaned sequence (5' to 3')", "sparkle", "#2F6FE4")
+        self.btn_copy_clean = QPushButton(" Copy sequence")
         self.btn_copy_clean.setObjectName("SecondaryBtn")
+        self.btn_copy_clean.setIcon(icon_for("copy", "#0B2A5B", 16))
+        self.btn_copy_clean.setIconSize(QSize(16, 16))
         self.btn_copy_clean.clicked.connect(lambda: self._copy_text(self.clean_sequence))
-        hdr_row.addWidget(lbl_s)
-        hdr_row.addStretch(1)
         hdr_row.addWidget(self.btn_copy_clean)
         self.txt_clean_seq = SequenceView()
         s_layout.addLayout(hdr_row)
@@ -588,11 +623,10 @@ class MainWindow(QMainWindow):
     def _build_gc_window_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 6, 20, 16)
+        layout.setSpacing(4)
 
-        ctrl_card = QFrame()
-        ctrl_card.setProperty("class", "Card")
+        ctrl_card = CardFrame()
         c_layout = QHBoxLayout(ctrl_card)
         c_layout.setContentsMargins(16, 12, 16, 12)
         c_layout.setSpacing(14)
@@ -620,13 +654,22 @@ class MainWindow(QMainWindow):
         c_layout.addWidget(self.btn_export_gc_csv)
         c_layout.addStretch(1)
 
-        self.lbl_gc_summary = QLabel("Ready")
-        self.lbl_gc_summary.setStyleSheet("color: #5A6A7F; font-weight: 600;")
-        c_layout.addWidget(self.lbl_gc_summary)
         layout.addWidget(ctrl_card)
 
-        chart_card = QFrame()
-        chart_card.setProperty("class", "Card")
+        gc_metrics = QGridLayout()
+        gc_metrics.setSpacing(10)
+        gc_cards = [
+            self._make_kpi_card("Windows", "—", "sliding windows analyzed", "blue", "gc"),
+            self._make_kpi_card("Average GC", "—", "across analyzed windows", "teal", "bars"),
+            self._make_kpi_card("Lowest GC", "—", "single window", "green", "gc"),
+            self._make_kpi_card("Highest GC", "—", "single window", "purple", "similarity"),
+        ]
+        self.gc_metric_values = [item[1] for item in gc_cards]
+        for col, (card, _, _) in enumerate(gc_cards):
+            gc_metrics.addWidget(card, 0, col)
+        layout.addLayout(gc_metrics)
+
+        chart_card = CardFrame()
         ch_layout = QVBoxLayout(chart_card)
         ch_layout.setContentsMargins(16, 14, 16, 14)
         lbl_g = QLabel("GC% across sliding windows")
@@ -636,8 +679,7 @@ class MainWindow(QMainWindow):
         ch_layout.addWidget(self.gc_chart)
         layout.addWidget(chart_card)
 
-        tbl_card = QFrame()
-        tbl_card.setProperty("class", "Card")
+        tbl_card = CardFrame()
         tb_layout = QVBoxLayout(tbl_card)
         tb_layout.setContentsMargins(16, 14, 16, 14)
         self.gc_table = QTableWidget(0, 6)
@@ -653,11 +695,10 @@ class MainWindow(QMainWindow):
     def _build_compression_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 6, 20, 16)
+        layout.setSpacing(4)
 
-        bar = QFrame()
-        bar.setProperty("class", "Card")
+        bar = CardFrame()
         b_layout = QHBoxLayout(bar)
         b_layout.setContentsMargins(16, 12, 16, 12)
         lbl_info = QLabel("Pack the sequence at 2 bits per base, with a 1-bit mask for N positions")
@@ -675,19 +716,18 @@ class MainWindow(QMainWindow):
         layout.addWidget(bar)
 
         kpis = QGridLayout()
-        kpis.setSpacing(14)
-        c1, self.comp_orig_val, self.comp_orig_sub = self._make_kpi_card("Original ASCII Size", "0 B", "1 byte per nucleotide")
-        c2, self.comp_bin_val, self.comp_bin_sub = self._make_kpi_card("Total .DNA File Size", "0 B", "18B header + Part 1 + Part 2")
-        c3, self.comp_save_val, self.comp_save_sub = self._make_kpi_card("Payload Reduction", "0.00%", "Net file savings: 0.00%")
-        c4, self.comp_ver_val, self.comp_ver_sub = self._make_kpi_card("Round-Trip Check", "Pending", "XOR Checksum: --")
+        kpis.setSpacing(4)
+        c1, self.comp_orig_val, self.comp_orig_sub = self._make_kpi_card("Original ASCII Size", "0 B", "1 byte per nucleotide", "blue", "pdf")
+        c2, self.comp_bin_val, self.comp_bin_sub = self._make_kpi_card("Total .DNA File Size", "0 B", "18B header + Part 1 + Part 2", "teal", "compress")
+        c3, self.comp_save_val, self.comp_save_sub = self._make_kpi_card("Payload Reduction", "0.00%", "Net file savings: 0.00%", "green", "gc")
+        c4, self.comp_ver_val, self.comp_ver_sub = self._make_kpi_card("Round-Trip Check", "Pending", "XOR Checksum: --", "purple", "star")
         kpis.addWidget(c1, 0, 0)
         kpis.addWidget(c2, 0, 1)
         kpis.addWidget(c3, 0, 2)
         kpis.addWidget(c4, 0, 3)
         layout.addLayout(kpis)
 
-        hex_card = QFrame()
-        hex_card.setProperty("class", "Card")
+        hex_card = CardFrame()
         h_layout = QVBoxLayout(hex_card)
         h_layout.setContentsMargins(16, 14, 16, 14)
         lbl_h = QLabel("Hex preview of the first 32 bytes")
@@ -705,11 +745,10 @@ class MainWindow(QMainWindow):
     def _build_rev_comp_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 6, 20, 16)
+        layout.setSpacing(4)
 
-        bar = QFrame()
-        bar.setProperty("class", "Card")
+        bar = CardFrame()
         b_layout = QHBoxLayout(bar)
         b_layout.setContentsMargins(16, 12, 16, 12)
         lbl = QLabel("Reverse complement of the opposite strand")
@@ -732,12 +771,15 @@ class MainWindow(QMainWindow):
         b_layout.addWidget(self.btn_export_rc)
         layout.addWidget(bar)
 
-        card = QFrame()
-        card.setProperty("class", "Card")
+        card = CardFrame()
         c_layout = QVBoxLayout(card)
         c_layout.setContentsMargins(16, 14, 16, 14)
         self.lbl_rc_meta = QLabel("Reverse Complement Sequence (5' -> 3'):")
         self.lbl_rc_meta.setProperty("class", "SectionTitle")
+        self.rc_metric_card, self.rc_metric_value, _ = self._make_kpi_card(
+            "Sequence length", "—", "reverse complement", "blue", "revcomp"
+        )
+        layout.addWidget(self.rc_metric_card)
         self.txt_rc_seq = SequenceView()
         self.txt_rc_seq.setProperty("class", "SeqBox")
         self.txt_rc_seq.setReadOnly(True)
@@ -750,11 +792,10 @@ class MainWindow(QMainWindow):
     def _build_rna_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 6, 20, 16)
+        layout.setSpacing(4)
 
-        bar = QFrame()
-        bar.setProperty("class", "Card")
+        bar = CardFrame()
         b_layout = QHBoxLayout(bar)
         b_layout.setContentsMargins(16, 12, 16, 12)
         lbl = QLabel("Transcribe the coding strand to mRNA (T becomes U)")
@@ -777,12 +818,21 @@ class MainWindow(QMainWindow):
         b_layout.addWidget(self.btn_export_rna)
         layout.addWidget(bar)
 
-        card = QFrame()
-        card.setProperty("class", "Card")
+        card = CardFrame()
         c_layout = QVBoxLayout(card)
         c_layout.setContentsMargins(16, 14, 16, 14)
         self.lbl_rna_meta = QLabel("Transcribed RNA Sequence (5' -> 3'):")
         self.lbl_rna_meta.setProperty("class", "SectionTitle")
+        rna_metrics = QGridLayout()
+        rna_metrics.setSpacing(10)
+        rna_cards = [
+            self._make_kpi_card("RNA length", "—", "nucleotides", "blue", "rna"),
+            self._make_kpi_card("Uracil bases", "—", "T bases converted to U", "teal", "drop"),
+        ]
+        self.rna_metric_values = [item[1] for item in rna_cards]
+        for col, (metric_card, _, _) in enumerate(rna_cards):
+            rna_metrics.addWidget(metric_card, 0, col)
+        layout.addLayout(rna_metrics)
         self.txt_rna_seq = SequenceView()
         self.txt_rna_seq.setProperty("class", "SeqBox")
         self.txt_rna_seq.setReadOnly(True)
@@ -804,6 +854,8 @@ class MainWindow(QMainWindow):
         scroll.setHorizontalScrollBarPolicy(enum(Qt, "ScrollBarPolicy", "ScrollBarAlwaysOff"))
         scroll.setFrameShape(enum(QFrame, "Shape", "NoFrame"))
         scroll.setWidget(page)
+        scroll.viewport().setAutoFillBackground(False)
+        page.setAttribute(enum(Qt, "WidgetAttribute", "WA_StyledBackground"), False)
         return scroll
 
     def _help_label(self, text: str) -> QFrame:
@@ -855,10 +907,10 @@ class MainWindow(QMainWindow):
 
     def _base_item(self, letter: str) -> QTableWidgetItem:
         item = QTableWidgetItem(letter)
-        item.setForeground(QBrush(QColor(BASE_TEXT.get(letter, "#0F1B2D"))))
-        item.setBackground(QBrush(QColor(BASE_TINT.get(letter, "#FFFFFF"))))
+        item.setForeground(QBrush(QColor(BASE_TEXT.get(letter, "#0B1F44"))))
         font = QFont()
         font.setBold(True)
+        font.setPointSize(12)
         item.setFont(font)
         item.setTextAlignment(align_center())
         return item
@@ -886,8 +938,8 @@ class MainWindow(QMainWindow):
     def _build_codon_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 6, 20, 16)
+        layout.setSpacing(4)
 
         layout.addWidget(self._help_label(
             "The loaded sequence is treated as the coding strand. Translation starts at base 1 in a fixed reading frame "
@@ -897,21 +949,34 @@ class MainWindow(QMainWindow):
             "A trailing 1 or 2 bases are shown as an incomplete codon and are not translated."
         ))
 
-        bar = QFrame()
-        bar.setProperty("class", "Card")
+        bar = CardFrame()
         b_layout = QHBoxLayout(bar)
         b_layout.setContentsMargins(16, 12, 16, 12)
         self.btn_run_codon = QPushButton("Translate Codons")
         self.btn_run_codon.setObjectName("PrimaryBtn")
         self.btn_run_codon.clicked.connect(self._on_run_codon)
-        self.lbl_codon_summary = QLabel("Translation has not been run for this FASTA.")
-        self.lbl_codon_summary.setWordWrap(True)
         b_layout.addWidget(self.btn_run_codon)
-        b_layout.addWidget(self.lbl_codon_summary, 1)
+        b_layout.addStretch(1)
         layout.addWidget(bar)
 
-        card = QFrame()
-        card.setProperty("class", "Card")
+        codon_metrics = QGridLayout()
+        codon_metrics.setSpacing(10)
+        codon_cards = [
+            self._make_kpi_card("Complete codons", "—", "translated triplets", "blue", "codon"),
+            self._make_kpi_card("Stop codons", "—", "translation stops", "purple", "pattern"),
+            self._make_kpi_card("Ambiguous codons", "—", "contain unknown bases", "teal", "codon"),
+            self._make_kpi_card("Leftover bases", "—", "not enough for a codon", "green", "bars"),
+        ]
+        self.codon_metric_values = [item[1] for item in codon_cards]
+        for index, (card, _, _) in enumerate(codon_cards):
+            codon_metrics.addWidget(card, index // 4, index % 4)
+        layout.addLayout(codon_metrics)
+        self.lbl_codon_status = QLabel("Translation starts at base 1 in the first reading frame.")
+        self.lbl_codon_status.setWordWrap(True)
+        self.lbl_codon_status.setProperty("class", "HelpText")
+        layout.addWidget(self.lbl_codon_status)
+
+        card = CardFrame()
         c_layout = QVBoxLayout(card)
         c_layout.setContentsMargins(16, 14, 16, 14)
         self.lbl_codon_rna = QLabel("RNA sequence")
@@ -923,8 +988,7 @@ class MainWindow(QMainWindow):
         c_layout.addWidget(self.txt_codon_rna)
         layout.addWidget(card)
 
-        ordered_card = QFrame()
-        ordered_card.setProperty("class", "Card")
+        ordered_card = CardFrame()
         o_layout = QVBoxLayout(ordered_card)
         o_layout.setContentsMargins(16, 14, 16, 14)
         ordered_title = QLabel("Complete codons in order")
@@ -936,8 +1000,7 @@ class MainWindow(QMainWindow):
         o_layout.addWidget(self.codon_table)
         layout.addWidget(ordered_card)
 
-        sum_card = QFrame()
-        sum_card.setProperty("class", "Card")
+        sum_card = CardFrame()
         s_layout = QVBoxLayout(sum_card)
         s_layout.setContentsMargins(16, 14, 16, 14)
         sum_title = QLabel("Distinct codons")
@@ -955,15 +1018,14 @@ class MainWindow(QMainWindow):
     def _build_pattern_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 6, 20, 16)
+        layout.setSpacing(4)
         layout.addWidget(self._help_label(
             "Search the loaded cleaned sequence. The pattern must be nonempty and may contain only A, T, G, C, or N. "
             "Lowercase input is normalized to uppercase. N is a literal base, not a wildcard. "
             "Every overlapping occurrence is reported: after each position the search advances one base. Coordinates are 1-based."
         ))
-        bar = QFrame()
-        bar.setProperty("class", "Card")
+        bar = CardFrame()
         b_layout = QHBoxLayout(bar)
         b_layout.setContentsMargins(16, 12, 16, 12)
         b_layout.addWidget(QLabel("Pattern:"))
@@ -977,10 +1039,20 @@ class MainWindow(QMainWindow):
         layout.addWidget(bar)
         self.lbl_pattern_summary = QLabel("Enter a pattern and click Search.")
         self.lbl_pattern_summary.setWordWrap(True)
-        self.lbl_pattern_summary.setProperty("class", "SectionTitle")
+        self.lbl_pattern_summary.setProperty("class", "HelpText")
         layout.addWidget(self.lbl_pattern_summary)
-        card = QFrame()
-        card.setProperty("class", "Card")
+        pattern_metrics = QGridLayout()
+        pattern_metrics.setSpacing(10)
+        pattern_cards = [
+            self._make_kpi_card("Pattern", "—", "searched sequence motif", "blue", "pattern"),
+            self._make_kpi_card("Pattern length", "—", "bases", "teal", "bars"),
+            self._make_kpi_card("Occurrences", "—", "overlapping matches included", "green", "gc"),
+        ]
+        self.pattern_metric_values = [item[1] for item in pattern_cards]
+        for col, (card, _, _) in enumerate(pattern_cards):
+            pattern_metrics.addWidget(card, 0, col)
+        layout.addLayout(pattern_metrics)
+        card = CardFrame()
         c_layout = QVBoxLayout(card)
         c_layout.setContentsMargins(16, 14, 16, 14)
         self.pattern_table = QTableWidget(0, 4)
@@ -993,8 +1065,8 @@ class MainWindow(QMainWindow):
     def _build_similarity_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 6, 20, 16)
+        layout.setSpacing(4)
         layout.addWidget(self._help_label(
             "Positional Similarity. Sequence 1 is the loaded FASTA. Choose a second FASTA to compare. "
             "Both files are parsed and validated in Assembly. Bases are compared from position 1 through the shorter sequence. "
@@ -1002,8 +1074,7 @@ class MainWindow(QMainWindow):
             "similarity percent = matches / compared positions * 100. Extra bases on the longer sequence are unpaired. "
             "Changing either FASTA clears the previous comparison result."
         ))
-        bar = QFrame()
-        bar.setProperty("class", "Card")
+        bar = CardFrame()
         b_layout = QHBoxLayout(bar)
         b_layout.setContentsMargins(16, 12, 16, 12)
         self.btn_pick_second = QPushButton("Select Second FASTA")
@@ -1018,10 +1089,26 @@ class MainWindow(QMainWindow):
         layout.addWidget(bar)
         self.lbl_similarity_summary = QLabel("Load a FASTA, then select the second sequence.")
         self.lbl_similarity_summary.setWordWrap(True)
-        self.lbl_similarity_summary.setProperty("class", "SectionTitle")
+        self.lbl_similarity_summary.setProperty("class", "HelpText")
         layout.addWidget(self.lbl_similarity_summary)
-        card = QFrame()
-        card.setProperty("class", "Card")
+        metrics = QGridLayout()
+        metrics.setSpacing(10)
+        cards = [
+            self._make_kpi_card("Matches", "—", "same base at a position", "green", "gc"),
+            self._make_kpi_card("Mismatches", "—", "different base at a position", "purple", "pattern"),
+            self._make_kpi_card("Unpaired bases", "—", "extra bases beyond shorter sequence", "teal", "bars"),
+            self._make_kpi_card("Compared positions", "—", "positions checked", "blue", "similarity"),
+            self._make_kpi_card("Similarity", "—", "matches / compared positions", "blue", "similarity"),
+        ]
+        self.similarity_metric_values = {
+            "MATCH_COUNT": cards[0][1], "MISMATCH_COUNT": cards[1][1],
+            "UNPAIRED_COUNT": cards[2][1], "COMPARED_POSITIONS": cards[3][1],
+            "SIMILARITY_PERCENT": cards[4][1],
+        }
+        for index, (card, _, _) in enumerate(cards):
+            metrics.addWidget(card, index // 3, index % 3)
+        layout.addLayout(metrics)
+        card = CardFrame()
         c_layout = QVBoxLayout(card)
         c_layout.setContentsMargins(16, 14, 16, 14)
         self.similarity_table = QTableWidget(0, 5)
@@ -1036,16 +1123,15 @@ class MainWindow(QMainWindow):
     def _build_primer_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 6, 20, 16)
+        layout.setSpacing(4)
         layout.addWidget(self._help_label(
             "Basic Wallace-rule Tm estimate. Every overlapping window of length L in the loaded cleaned sequence is scanned. "
             "Tm (degrees Celsius) = 2 * (A + T) + 4 * (G + C). Windows containing N are skipped and have no numeric Tm. "
             "This educational estimate does not account for salt concentration, primer concentration, or nearest-neighbor effects. "
             "Candidates have not been validated for laboratory use. L must be an integer from 1 through the sequence length."
         ))
-        bar = QFrame()
-        bar.setProperty("class", "Card")
+        bar = CardFrame()
         b_layout = QHBoxLayout(bar)
         b_layout.setContentsMargins(16, 12, 16, 12)
         b_layout.addWidget(QLabel("Candidate length L:"))
@@ -1061,10 +1147,24 @@ class MainWindow(QMainWindow):
         layout.addWidget(bar)
         self.lbl_primer_summary = QLabel("Choose L and scan the loaded sequence.")
         self.lbl_primer_summary.setWordWrap(True)
-        self.lbl_primer_summary.setProperty("class", "SectionTitle")
+        self.lbl_primer_summary.setProperty("class", "HelpText")
         layout.addWidget(self.lbl_primer_summary)
-        card = QFrame()
-        card.setProperty("class", "Card")
+        primer_metrics = QGridLayout()
+        primer_metrics.setSpacing(10)
+        primer_cards = [
+            self._make_kpi_card("Candidate length", "—", "bases per window", "blue", "primer"),
+            self._make_kpi_card("Windows scanned", "—", "candidate windows", "teal", "bars"),
+            self._make_kpi_card("Valid candidates", "—", "without ambiguous bases", "green", "primer"),
+            self._make_kpi_card("Ambiguous skipped", "—", "windows containing N", "purple", "codon"),
+            self._make_kpi_card("Minimum Tm", "—", "degrees Celsius", "blue", "bars"),
+            self._make_kpi_card("Maximum Tm", "—", "degrees Celsius", "teal", "bars"),
+            self._make_kpi_card("Average Tm", "—", "degrees Celsius", "green", "similarity"),
+        ]
+        self.primer_metric_values = [item[1] for item in primer_cards]
+        for index, (card, _, _) in enumerate(primer_cards):
+            primer_metrics.addWidget(card, index // 4, index % 4)
+        layout.addLayout(primer_metrics)
+        card = CardFrame()
         c_layout = QVBoxLayout(card)
         c_layout.setContentsMargins(16, 14, 16, 14)
         self.primer_table = QTableWidget(0, 9)
@@ -1079,22 +1179,47 @@ class MainWindow(QMainWindow):
     def _build_pdf_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 6, 20, 16)
+        layout.setSpacing(4)
         layout.addWidget(self._help_label(
-            "Generate a PDF for the loaded FASTA. Biological values come from Assembly reports that have actually been run. "
-            "Analyses that have not been run are marked as not run. Python lays out the document and does not recalculate "
-            "counts, GC, translation, matches, similarity, or Tm."
+            "Preview the report content, choose which completed analyses to include, then export a polished PDF. "
+            "Sequence statistics are always included."
         ))
         self.lbl_pdf_status = QLabel("Load a FASTA to generate a report.")
         self.lbl_pdf_status.setWordWrap(True)
         self.lbl_pdf_status.setProperty("class", "SectionTitle")
         layout.addWidget(self.lbl_pdf_status)
-        self.btn_pdf_page = QPushButton("Generate PDF Report")
+        self.pdf_section_checks = {}
+        options = QFrame()
+        options_layout = QGridLayout(options)
+        options_layout.setContentsMargins(0, 0, 0, 0)
+        sections = [
+            ("gc", "GC window analysis", "gc_result"),
+            ("rev", "Reverse complement", "rev_result"),
+            ("rna", "DNA-to-RNA conversion", "rna_result"),
+            ("codon", "Codon translation", "codon_result"),
+            ("pattern", "Pattern search", "pattern_result"),
+            ("primer", "Primer Tm", "primer_result"),
+            ("similarity", "Sequence comparison", "similarity_result"),
+        ]
+        self._pdf_section_attrs = {key: attr for key, _, attr in sections}
+        for index, (key, title, _) in enumerate(sections):
+            check = QCheckBox(title)
+            check.setChecked(True)
+            check.setEnabled(False)
+            check.stateChanged.connect(self._refresh_pdf_preview)
+            self.pdf_section_checks[key] = check
+            options_layout.addWidget(check, index // 2, index % 2)
+        layout.addWidget(options)
+        self.pdf_preview = QPlainTextEdit()
+        self.pdf_preview.setReadOnly(True)
+        self.pdf_preview.setMinimumHeight(220)
+        self.pdf_preview.setPlaceholderText("Load a FASTA to preview the report.")
+        layout.addWidget(self.pdf_preview, 1)
+        self.btn_pdf_page = QPushButton("Export as PDF")
         self.btn_pdf_page.setObjectName("PrimaryBtn")
         self.btn_pdf_page.clicked.connect(self._on_generate_pdf)
         layout.addWidget(self.btn_pdf_page, 0)
-        layout.addStretch(1)
         return page
 
     def _switch_page(self, index: int):
@@ -1115,6 +1240,8 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentIndex(index)
         self._current_page = index
         self.lbl_page_title.setText(titles[index])
+        icon_key = "bars" if index == 0 else self._nav_icon_keys[index]
+        self.lbl_page_icon.setPixmap(badge_pixmap(icon_key, "#2F6FE4", None, 34, 1.5))
         for idx, btn in enumerate(self.nav_buttons):
             btn.set_active(idx == index)
         QTimer.singleShot(0, lambda: self._place_pill(animate=not first_show))
@@ -1157,6 +1284,7 @@ class MainWindow(QMainWindow):
         speed = 4.5 if busy else 1.0
         self.landing_helix.set_speed(speed)
         self.brand_mark.set_speed(speed)
+        self.sidebar_helix.set_speed(speed)
         self.lbl_busy.setVisible(busy)
 
     def _launch_task(self, task_name: str, fn, *args):
@@ -1183,6 +1311,20 @@ class MainWindow(QMainWindow):
         if not path or (self.active_worker is not None and self.active_worker.isRunning()):
             return
         self.current_fasta_path = path
+        self.current_header = ""
+        self.clean_sequence = ""
+        self.rev_comp_sequence = ""
+        self.rna_sequence = ""
+        self.second_fasta_path = ""
+        self.stats_result = None
+        self.gc_result = None
+        self.rev_result = None
+        self.rna_result = None
+        self.codon_result = None
+        self.pattern_result = None
+        self.similarity_result = None
+        self.primer_result = None
+        self._refresh_pdf_status()
         self.lbl_landing_status.setText(f"Reading {os.path.basename(path)}...")
         self._launch_task("STATS", self.bridge.run_stats_from_fasta, path)
 
@@ -1207,6 +1349,8 @@ class MainWindow(QMainWindow):
             self._load_fasta(urls[0].toLocalFile())
 
     def _on_run_gc_window(self):
+        for label in self.gc_metric_values:
+            label.setText("—")
         self._launch_task(
             "GC_WIN",
             self.bridge.run_gc_window,
@@ -1226,6 +1370,8 @@ class MainWindow(QMainWindow):
     def _on_run_codon(self):
         if not self.clean_sequence:
             return
+        for label in self.codon_metric_values:
+            label.setText("—")
         self._launch_task("TRANSLATE", self.bridge.run_codon_translation)
 
     def _on_run_pattern(self):
@@ -1234,6 +1380,8 @@ class MainWindow(QMainWindow):
         pattern = self.txt_pattern.text()
         self.pattern_result = None
         self.pattern_table.setRowCount(0)
+        for label in self.pattern_metric_values:
+            label.setText("—")
         self.lbl_pattern_summary.setText("Searching...")
         if not self._launch_task("PATTERN", self.bridge.run_pattern_search, pattern):
             return
@@ -1274,6 +1422,8 @@ class MainWindow(QMainWindow):
             return
         self.primer_result = None
         self.primer_table.setRowCount(0)
+        for label in self.primer_metric_values:
+            label.setText("—")
         self.lbl_primer_summary.setText("Scanning candidate windows...")
         self._launch_task("PRIMER_TM", self.bridge.run_primer_tm, self.spin_primer_len.value())
 
@@ -1299,7 +1449,7 @@ class MainWindow(QMainWindow):
             elif task_name == "PRIMER_TM":
                 self.lbl_primer_summary.setText(msg)
             elif task_name == "TRANSLATE":
-                self.lbl_codon_summary.setText(msg)
+                self.lbl_codon_rna.setText(msg)
             return
 
         if task_name == "STATS":
@@ -1373,13 +1523,17 @@ class MainWindow(QMainWindow):
         self.gc_result = None
         self.gc_chart.set_windows([])
         self.gc_table.setRowCount(0)
-        self.lbl_gc_summary.setText("Ready")
+        for label in self.gc_metric_values:
+            label.setText("—")
         self.rev_comp_sequence = ""
         self.rev_result = None
+        self.rc_metric_value.setText("—")
         self.txt_rc_seq.clear()
         self.lbl_rc_meta.setText("Reverse Complement Sequence (5' -> 3'):")
         self.rna_sequence = ""
         self.rna_result = None
+        for label in self.rna_metric_values:
+            label.setText("—")
         self.txt_rna_seq.clear()
         self.lbl_rna_meta.setText("Transcribed RNA Sequence (5' -> 3'):")
         self.txt_hex_preview.clear()
@@ -1414,7 +1568,15 @@ class MainWindow(QMainWindow):
         self.gc_result = res
         self.last_windows = windows
         self.gc_chart.set_windows(windows)
-        self.lbl_gc_summary.setText(f"Computed {len(windows):,} windows")
+        gc_values = [float(item.get("gc_pct", 0)) for item in windows]
+        values = [
+            f"{len(windows):,}",
+            f"{sum(gc_values) / len(gc_values):.2f}%" if gc_values else "N/A",
+            f"{min(gc_values):.2f}%" if gc_values else "N/A",
+            f"{max(gc_values):.2f}%" if gc_values else "N/A",
+        ]
+        for label, value in zip(self.gc_metric_values, values):
+            label.setText(value)
 
         display_rows = [
             {
@@ -1449,6 +1611,7 @@ class MainWindow(QMainWindow):
         self.rev_result = res
         self.rev_comp_sequence = res.get("RESULT_SEQUENCE", "")
         seq_len = int(res.get("SEQUENCE_LENGTH", "0"))
+        self.rc_metric_value.setText(f"{seq_len:,} bp")
         self.lbl_rc_meta.setText(f"Reverse Complement Sequence (5' -> 3') — {seq_len:,} bp:")
         self.txt_rc_seq.setPlainText(format_seq_blocks(self.rev_comp_sequence))
 
@@ -1457,7 +1620,9 @@ class MainWindow(QMainWindow):
         self.rna_sequence = res.get("RESULT_SEQUENCE", "")
         seq_len = int(res.get("SEQUENCE_LENGTH", "0"))
         u_cnt = int(res.get("URACIL_COUNT", "0"))
-        self.lbl_rna_meta.setText(f"Transcribed mRNA Sequence (5' -> 3') — {seq_len:,} nt  |  {u_cnt:,} Uracils (U):")
+        self.rna_metric_values[0].setText(f"{seq_len:,} nt")
+        self.rna_metric_values[1].setText(f"{u_cnt:,}")
+        self.lbl_rna_meta.setText("Transcribed mRNA Sequence (5' -> 3'):")
         self.txt_rna_seq.setPlainText(format_seq_blocks(self.rna_sequence))
 
     def _clear_codon_view(self):
@@ -1465,38 +1630,46 @@ class MainWindow(QMainWindow):
         self.txt_codon_rna.clear()
         self.codon_table.setRowCount(0)
         self.codon_summary_table.setRowCount(0)
-        self.lbl_codon_summary.setText("Translation has not been run for this FASTA.")
+        for label in self.codon_metric_values:
+            label.setText("—")
         self.lbl_codon_rna.setText("RNA sequence")
+        self.lbl_codon_status.setText("Translation starts at base 1 in the first reading frame.")
 
     def _clear_pattern_view(self):
         self.pattern_result = None
         self.pattern_table.setRowCount(0)
         self.lbl_pattern_summary.setText("Enter a pattern and click Search.")
+        for label in self.pattern_metric_values:
+            label.setText("—")
 
     def _clear_similarity_view(self):
         self.similarity_result = None
         self.similarity_table.setRowCount(0)
+        for label in self.similarity_metric_values.values():
+            label.setText("—")
 
     def _clear_primer_view(self):
         self.primer_result = None
         self.primer_table.setRowCount(0)
         self.lbl_primer_summary.setText("Choose L and scan the loaded sequence.")
+        for label in self.primer_metric_values:
+            label.setText("—")
 
     def _apply_codon_result(self, res: dict):
         self.codon_result = res
         rna = res.get("RESULT_SEQUENCE", "")
         leftover_n = res.get("LEFTOVER_BASES", "0")
         leftover_seq = res.get("LEFTOVER_SEQ", "")
-        trail = "No incomplete trailing codon."
-        if leftover_n not in ("0", ""):
-            trail = f"Incomplete trailing codon: {leftover_seq} ({leftover_n} base(s), not translated)."
-        self.lbl_codon_summary.setText(
-            "Coding-strand translation from base 1. "
-            f"Complete codons: {res.get('COMPLETE_CODONS', '0')}    "
-            f"Stop codons: {res.get('STOP_CODONS', '0')}    "
-            f"Ambiguous codons: {res.get('AMBIGUOUS_CODONS', '0')}    "
-            f"Leftover bases: {leftover_n}. {trail}"
+        self.lbl_codon_status.setText(
+            f"Incomplete trailing bases {leftover_seq} were not translated."
+            if leftover_n not in ("0", "") else
+            "Translation starts at base 1 in the first reading frame. No incomplete trailing codon."
         )
+        for label, value in zip(self.codon_metric_values, (
+            res.get("COMPLETE_CODONS", "0"), res.get("STOP_CODONS", "0"),
+            res.get("AMBIGUOUS_CODONS", "0"), leftover_n,
+        )):
+            label.setText(str(value))
         self.lbl_codon_rna.setText(f"RNA sequence — {res.get('SEQUENCE_LENGTH', '0')} nt")
         self.txt_codon_rna.setPlainText(format_seq_blocks(rna))
         self._fill_table(self.codon_table, res.get("ORDERED", []), ["index", "start", "codon", "symbol", "name"])
@@ -1511,25 +1684,24 @@ class MainWindow(QMainWindow):
         count = res.get("MATCH_COUNT", "0")
         pattern = res.get("PATTERN", "")
         matches = res.get("MATCHES", [])
-        if count == "0":
-            self.lbl_pattern_summary.setText(f"No matches found for pattern {pattern}.")
-        else:
-            self.lbl_pattern_summary.setText(
-                f"Pattern {pattern} ({res.get('PATTERN_LENGTH', '')} bp): {count} match(es), including overlaps."
-            )
+        for label, value in zip(self.pattern_metric_values, (
+            pattern or "—", f"{res.get('PATTERN_LENGTH', '0')} bp", count
+        )):
+            label.setText(str(value))
+        self.lbl_pattern_summary.setText(
+            f"No matches found for {pattern}." if count == "0" else "Search complete. Overlapping occurrences are included."
+        )
         self._fill_table(self.pattern_table, matches, ["index", "start", "end", "pattern"])
 
     def _apply_similarity_result(self, res: dict):
         self.similarity_result = res
+        for key, label in self.similarity_metric_values.items():
+            value = res.get(key, "0")
+            label.setText(f"{value}%" if key == "SIMILARITY_PERCENT" else str(value))
         self.lbl_similarity_summary.setText(
-            "Positional Similarity (not an alignment; indels are not modeled). "
-            f"Sequence 1: {res.get('SEQ1_HEADER', '')} ({res.get('SEQ1_LENGTH', '')} bp). "
+            f"Sequence 1: {res.get('SEQ1_HEADER', '')} ({res.get('SEQ1_LENGTH', '')} bp)  ·  "
             f"Sequence 2: {res.get('SEQ2_HEADER', '')} ({res.get('SEQ2_LENGTH', '')} bp). "
-            f"Matches: {res.get('MATCH_COUNT', '')}. "
-            f"Mismatches: {res.get('MISMATCH_COUNT', '')}. "
-            f"Unpaired: {res.get('UNPAIRED_COUNT', '')}. "
-            f"Compared positions: {res.get('COMPARED_POSITIONS', '')}. "
-            f"Similarity: {res.get('SIMILARITY_PERCENT', '')}%."
+            "Positional comparison; insertions and deletions are not modeled."
         )
         header1 = res.get("SEQ1_HEADER", "Sequence 1")
         header2 = res.get("SEQ2_HEADER", "Sequence 2")
@@ -1564,17 +1736,16 @@ class MainWindow(QMainWindow):
     def _apply_primer_result(self, res: dict):
         self.primer_result = res
         self.lbl_primer_summary.setText(
-            "Basic Wallace-rule Tm estimate. "
-            "This educational estimate does not account for salt concentration, primer concentration, "
-            "or nearest-neighbor effects, and candidates have not been validated for laboratory use. "
-            f"L = {res.get('CANDIDATE_LENGTH', '')}. "
-            f"Windows scanned: {res.get('TOTAL_WINDOWS', '')}. "
-            f"Valid candidates: {res.get('VALID_CANDIDATES', '')}. "
-            f"Ambiguous windows skipped: {res.get('AMBIGUOUS_WINDOWS', '')}. "
-            f"Minimum Tm: {res.get('MIN_TM', '')}. "
-            f"Maximum Tm: {res.get('MAX_TM', '')}. "
-            f"Average Tm: {res.get('AVERAGE_TM', '')}."
+            "Wallace-rule estimate only; salt, primer concentration, and nearest-neighbor effects are not modeled. "
+            "Candidates have not been validated for laboratory use."
         )
+        values = (
+            f"{res.get('CANDIDATE_LENGTH', '—')} bp", res.get("TOTAL_WINDOWS", "0"),
+            res.get("VALID_CANDIDATES", "0"), res.get("AMBIGUOUS_WINDOWS", "0"),
+            res.get("MIN_TM", "N/A"), res.get("MAX_TM", "N/A"), res.get("AVERAGE_TM", "N/A"),
+        )
+        for label, value in zip(self.primer_metric_values, values):
+            label.setText(str(value))
         self._fill_table(
             self.primer_table,
             res.get("CANDIDATES", []),
@@ -1584,20 +1755,43 @@ class MainWindow(QMainWindow):
     def _refresh_pdf_status(self):
         if not self.stats_result:
             self.lbl_pdf_status.setText("Load a FASTA to generate a report.")
+            self.pdf_preview.clear()
+            for check in self.pdf_section_checks.values():
+                check.setEnabled(False)
             return
-        flags = [
-            ("GC window analysis", self.gc_result is not None),
-            ("Reverse complement", self.rev_result is not None),
-            ("DNA-to-RNA", self.rna_result is not None),
-            ("Codon translation", self.codon_result is not None),
-            ("Pattern search", self.pattern_result is not None),
-            ("Primer Tm analysis", self.primer_result is not None),
-            ("Positional similarity", self.similarity_result is not None),
-        ]
-        lines = [f"Loaded: {os.path.basename(self.current_fasta_path)}"]
-        for name, ready in flags:
-            lines.append(f"{name}: {'included' if ready else 'not run'}")
-        self.lbl_pdf_status.setText("\n".join(lines))
+        for key, attr in self._pdf_section_attrs.items():
+            available = getattr(self, attr) is not None
+            check = self.pdf_section_checks[key]
+            if available and not check.isEnabled():
+                check.setChecked(True)
+            check.setEnabled(available)
+        ready = sum(getattr(self, attr) is not None for attr in self._pdf_section_attrs.values())
+        self.lbl_pdf_status.setText(f"{os.path.basename(self.current_fasta_path)} · {ready} analysis sections available")
+        self._refresh_pdf_preview()
+
+    def _refresh_pdf_preview(self, *_):
+        if not self.stats_result:
+            return
+        stats = self.stats_result
+        lines = ["DNA ANALYZER REPORT", f"Source: {os.path.basename(self.current_fasta_path)}", "",
+                 "SEQUENCE OVERVIEW",
+                 f"Length: {stats.get('SEQUENCE_LENGTH', '')} bp",
+                 f"A {stats.get('COUNT_A', '')}   T {stats.get('COUNT_T', '')}   G {stats.get('COUNT_G', '')}   C {stats.get('COUNT_C', '')}   N {stats.get('COUNT_N', '')}",
+                 f"GC {stats.get('GC_PERCENT', '')}%   AT {stats.get('AT_PERCENT', '')}%", "", "SELECTED ANALYSES"]
+        summaries = {
+            "gc": lambda d: f"{d.get('TOTAL_WINDOWS', '')} windows · size {d.get('WINDOW_SIZE', '')} bp · step {d.get('STEP_SIZE', '')} bp",
+            "rev": lambda d: f"Reverse complement · {d.get('SEQUENCE_LENGTH', '')} bp",
+            "rna": lambda d: f"RNA conversion · {d.get('URACIL_COUNT', '')} uracil bases",
+            "codon": lambda d: f"Translation · {d.get('COMPLETE_CODONS', '')} codons · {d.get('STOP_CODONS', '')} stops",
+            "pattern": lambda d: f"Pattern {d.get('PATTERN', '')} · {d.get('MATCH_COUNT', '')} matches",
+            "primer": lambda d: f"Primer Tm · {d.get('VALID_CANDIDATES', '')} valid candidates",
+            "similarity": lambda d: f"Sequence comparison · {d.get('SIMILARITY_PERCENT', '')}% similarity",
+        }
+        for key, attr in self._pdf_section_attrs.items():
+            data = getattr(self, attr)
+            if data and self.pdf_section_checks[key].isChecked():
+                lines.append("• " + summaries[key](data))
+        self.pdf_preview.setPlainText("\n".join(lines))
 
     def _on_generate_pdf(self):
         if not self.stats_result or not self.current_fasta_path:
@@ -1627,7 +1821,11 @@ class MainWindow(QMainWindow):
             "pattern": self.pattern_result,
             "primer": self.primer_result,
             "similarity": self.similarity_result,
+            "selected_sections": [key for key, check in self.pdf_section_checks.items() if check.isChecked()],
         }
+        for key, attr in self._pdf_section_attrs.items():
+            if key not in payload["selected_sections"]:
+                payload[key] = None
         try:
             write_analysis_pdf(path, payload)
         except Exception as exc:

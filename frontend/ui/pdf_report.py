@@ -11,23 +11,35 @@ def write_analysis_pdf(path: str, report: dict) -> None:
         ) from exc
 
     class AnalysisPdf(FPDF):
+        def header(self):
+            self.set_font("Helvetica", "B", 9)
+            self.set_text_color(47, 111, 228)
+            self.cell(0, 6, "DNA ANALYZER  /  SEQUENCE REPORT", align="L")
+            self.ln(3)
+            self.set_draw_color(218, 228, 242)
+            self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
+            self.ln(4)
+
         def footer(self):
             self.set_y(-12)
             self.set_font("Helvetica", size=8)
-            self.set_text_color(80, 80, 80)
-            self.cell(0, 8, f"Page {self.page_no()}", align="C")
+            self.set_text_color(100, 116, 139)
+            self.cell(0, 8, f"DNA Analyzer  ·  Page {self.page_no()}", align="C")
 
     pdf = AnalysisPdf(format="A4")
     pdf.set_auto_page_break(auto=True, margin=16)
     pdf.set_margins(14, 14, 14)
     pdf.add_page()
+    selected_sections = report.get("selected_sections")
 
     def heading(text, size=13):
         pdf.ln(2)
         pdf.set_x(pdf.l_margin)
         pdf.set_font("Helvetica", "B", size)
-        pdf.set_text_color(15, 23, 42)
+        pdf.set_text_color(11, 42, 91)
         pdf.multi_cell(0, 7, _latin(text))
+        pdf.set_draw_color(220, 232, 248)
+        pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
         pdf.set_x(pdf.l_margin)
 
     def body(text, size=10):
@@ -45,6 +57,15 @@ def write_analysis_pdf(path: str, report: dict) -> None:
         pdf.set_x(pdf.l_margin)
 
     def not_run(title):
+        if selected_sections is not None:
+            key = {
+                "GC window analysis": "gc", "Reverse complement": "rev",
+                "DNA-to-RNA conversion": "rna", "Codon translation": "codon",
+                "Pattern search": "pattern", "Candidate primer Tm analysis": "primer",
+                "Sequence similarity": "similarity",
+            }.get(title)
+            if key not in selected_sections:
+                return
         heading(title)
         body("This analysis was not run for the loaded FASTA.")
 
